@@ -87,9 +87,11 @@
 | 补迁遗漏 | 首次迁移漏了服务端契约测试；补 `data-service/test` 31、`ai-gateway/test` 16、`ai-gateway/scripts` 23、`examples` 2，并把它们写进 `verify.mjs` 规模判据 |
 | 32 份设计文档 | 全部在 `docs/` |
 | 体积 | 清理 `windows/flutter/ephemeral/`（278MB PDB + 46MB DLL）后：全仓 14MB |
-| 禁入项 | `.env.prod*` / `s.yaml` / `key.properties` / APK / `*.db` / `*.log` / `node_modules` / `build` / `pgdata` 全部零命中 |
+| 权威清单对比 | 原工程 `git ls-files` 共 **749** 个跟踪文件，按四分区映射逐条检查 → **缺失 0**。10 个「根级未映射」中 4 个是中文文档名被 git 引号转义的假阳性，其余为 `.env.prod.example` / `s.yaml`（含密钥，刻意排除）与被本仓重写的 `README.md` / `.gitignore` / `.gitattributes` / `app-identity.json` |
+| 禁入项 | `.env.prod*` / `s.yaml` / `key.properties` / `*.p12` / APK / `*.db` / `*.log` / `node_modules` / `build` / `pgdata` 全部零命中 |
+| 平台生成物 | `cp -r android` 曾带进 `release-keystore.p12`（**签名密钥**）与 Flutter 生成物（`gradle-wrapper.jar`、`gradlew`、`Generated.xcconfig`、`GeneratedPluginRegistrant.*`）。原工程也没跟踪它们；已全部从工作区删除，`git status --ignored` 现为空 |
 | `npm run verify` | **11 项全绿**，1 条已知差异提示（本机开发口令）；JS 语法 251 个文件通过 |
-| 判据证伪 | ① 注入硬编码绝对路径代码行 ⇒ 恰好「绝对路径」红；② 移走一个非关键测试文件 ⇒ 恰好「源码规模」红。两次还原后均恢复全绿 |
+| 判据证伪 | ① 注入硬编码绝对路径代码行 ⇒ 恰好「绝对路径」红；② 移走一个非关键测试文件 ⇒ 恰好「源码规模」红；③ 放一个假 `.p12` ⇒ 恰好「禁入项」红。三次还原后均恢复全绿 |
 | 未验证 | `flutter pub get` / `analyze` / `test` 本次**未执行**（新目录尚未装 Flutter 依赖）；真库跑迁移、端到端探针、云上 FC3 均未跑 |
 
 > 接手后第一步：`cd frontend && flutter pub get && flutter analyze && flutter test`，

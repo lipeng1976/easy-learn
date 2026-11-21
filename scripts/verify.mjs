@@ -100,6 +100,7 @@ const BANNED = [
   [/key\.properties$/i, 'Android 签名配置'],
   [/local\.properties$/i, '本机 SDK 路径'],
   [/\.apk$/i, 'APK'],
+  [/\.(p12|jks|keystore)$/i, '签名密钥'],
   [/\.(db|sqlite|sqlite3)$/i, '数据库快照'],
   [/\.log$/i, '日志'],
   [/\.iml$/i, 'IDE 配置'],
