@@ -1,0 +1,26 @@
+# Flutter 前端忽略规则
+
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+build/
+.idea/
+.vscode/
+*.log
+
+# 构建产物
+*.apk
+*.aab
+*.ipa
+*.dmg
+*.exe
+
+# 本地配置（前端只接受 --dart-define，不读 .env）
+.env
+local.properties
+key.properties
+*.jks
+*.keystore
+
+# 注意：应用要提交 pubspec.lock，这里**不**忽略它。

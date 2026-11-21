@@ -1,0 +1,23 @@
+{
+  "name": "easy-learn-handover",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "伴学 APP 工程交接基线：Flutter 前端 + Node 双服务后端 + PostgreSQL DDL/种子",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "backend/shared",
+    "backend/data-service",
+    "backend/ai-gateway"
+  ],
+  "scripts": {
+    "db:init": "node scripts/init-db.mjs",
+    "check:env": "node scripts/check-env.mjs",
+    "verify": "node scripts/verify.mjs",
+    "dev:data": "node backend/data-service/src/server.js",
+    "dev:ai": "node backend/ai-gateway/src/server.js",
+    "test": "node scripts/verify.mjs"
+  }
+}

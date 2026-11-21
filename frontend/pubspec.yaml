@@ -1,0 +1,28 @@
+# ⚠️ name 是 Dart 包名（import 'package:easy_learn_app/...' 用），不是应用名。
+#    改它要动全仓每一个 import，与发布无关，别顺手改。
+name: easy_learn_app
+description: "伴学：作业、错题复习、学习计划、积分与家长沟通放在一处。"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  get: ^4.6.6
+  http: ^1.2.2
+  intl: ^0.19.0
+  path: ^1.9.1
+
+# ⚠️ 业务代码迁入时需按原工程 pubspec.yaml 补齐 sqflite / path_provider /
+#    image_picker 等本地库与平台插件。基线只用上面这些，保证 flutter test 可离线编译。
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
