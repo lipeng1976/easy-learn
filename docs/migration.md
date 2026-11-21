@@ -90,22 +90,63 @@
 | 权威清单对比 | 原工程 `git ls-files` 共 **749** 个跟踪文件，按四分区映射逐条检查 → **缺失 0**。10 个「根级未映射」中 4 个是中文文档名被 git 引号转义的假阳性，其余为 `.env.prod.example` / `s.yaml`（含密钥，刻意排除）与被本仓重写的 `README.md` / `.gitignore` / `.gitattributes` / `app-identity.json` |
 | 禁入项 | `.env.prod*` / `s.yaml` / `key.properties` / `*.p12` / APK / `*.db` / `*.log` / `node_modules` / `build` / `pgdata` 全部零命中 |
 | 平台生成物 | `cp -r android` 曾带进 `release-keystore.p12`（**签名密钥**）与 Flutter 生成物（`gradle-wrapper.jar`、`gradlew`、`Generated.xcconfig`、`GeneratedPluginRegistrant.*`）。原工程也没跟踪它们；已全部从工作区删除，`git status --ignored` 现为空 |
-| `npm run verify` | **11 项全绿**，1 条已知差异提示（本机开发口令）；JS 语法 251 个文件通过 |
+| `npm run verify`（迁入当时） | **11 项全绿**，1 条已知差异提示（本机开发口令）；JS 语法 251 个文件通过。**该差异 11-21 已收敛，现为 12 项 0 提示，见 §7** |
 | 判据证伪 | ① 注入硬编码绝对路径代码行 ⇒ 恰好「绝对路径」红；② 移走一个非关键测试文件 ⇒ 恰好「源码规模」红；③ 放一个假 `.p12` ⇒ 恰好「禁入项」红。三次还原后均恢复全绿 |
 | 未验证 | `flutter pub get` / `analyze` / `test` 本次**未执行**（新目录尚未装 Flutter 依赖）；真库跑迁移、端到端探针、云上 FC3 均未跑 |
 
 > 接手后第一步：`cd frontend && flutter pub get && flutter analyze && flutter test`，
 > 再按 `README.md` 起本机栈跑 `backend/data-service/scripts/probe-*.mjs`。
 
-## 6. 遗留差异（明确不改，避免行为零变化被破坏）
+## 6. 遗留差异（未改项）
 
-1. **本机开发公开弱口令**：`app_rls_local_dev` / `app_auth_local_dev` 散落在
-   `db/migrations/002_rls.sql`、`003_session.sql`、`src/pg-local.js`、
-   `scripts/dev-stack.mjs`、`scripts/provision-app-roles.mjs`，以及
-   `DEV_STACK_SECRET`（`shared/env.js`）。它们是本机「一条命令起全套」的既有设计，
-   不是生产密钥。彻底清除需单独一轮改造并回归本机栈。
+1. ✅ **本机开发公开弱口令 —— 已收敛（11-21）**，见 §7。
 2. **探针脚本里的本机绝对路径默认值**：`D:/easy_learn_home/...`、`D:/easylearn/image`、
    `C:\Windows`（`process.env.SystemRoot` 兜底）保留；数据库里不存绝对路径。
    `verify.mjs` 只扫生产代码/SQL 的代码行，注释示例与测试反例放行。
 3. **规范未落地**：`relative_path` 域、`config.js` 单点、合并终态 DDL 仍在 `docs/baseline/`，
    见 §4。后续按需求逐项收敛，不要一次性全仓重命名。
+4. **部署/探针脚本仍引用旧 `serverless/` 路径**：全量迁入改成 `backend/` / `db/`
+   后，`backend/scripts/deploy-prepare.mjs`、`deploy-check.mjs` 及多个 `probe-*.mjs`
+   里的 `REPO` 拼接与文档命令尚未批量改写。本次只修了本机栈启动链上必需的两处
+   （`sqlDir`、`gatewayRoot`），其余不在本次范围，跑云端部署脚本前需单独收敛。
+
+## 7. 已收敛：本机凭据零硬编码（2026-11-21）
+
+### 改了什么
+
+| 层 | 改动 |
+|---|---|
+| 新增 | `backend/shared/dev-credentials.js`：4 个凭据（PG 3 个角色口令 + 会话密钥）唯一来源。环境变量优先（`PG_ADMIN_PASSWORD` / `APP_RLS_PASSWORD` / `APP_AUTH_PASSWORD` / `AI_SESSION_SECRET`）；本机没配时随机生成一次并持久化到 `.dev-credentials.json`（gitignore，重启复用，避免踢下线 / 连不上旧库）。环境变量齐全时完全不碰本地文件。 |
+| SQL | `002_rls.sql` / `003_session.sql` 改为 `current_setting('app.dev_*_password')` + `EXECUTE format(... PASSWORD %L, pw)`；口令由 `migrate.js` 在事务内 `set_config` 注入。**没注入且角色不存在 ⇒ `RAISE EXCEPTION`**，绝不退回默认值。 |
+| 迁移器 | `runMigrations(client, sqlDir, options)` 新增 `options.rolePasswords`，仅本机开发栈与临时测试库传；生产 `migrate.mjs` 不传，强制「先 provision 后迁移」。 |
+| 本机组态 | `pg-local.js` 的 `LOCAL_PG.*.password` 改为 getter 读取凭据模块，既有 `LOCAL_PG.app.password` 读法不变，`list-accounts` / `reconcile` / `report-storage` 等脚本自动同源。 |
+| 开发栈 | `dev-stack.mjs` 去掉固定会话密钥默认值，改用运行期凭据；`--run` 等所有既有行为保留。 |
+| 文档 / 配置 | `.env.example` 补 4 个变量（留空合法）；`migrate.mjs`、`deploy-prepare.mjs`、`release-guide.md`、`README.md`、`db/README.md` 里「迁移会建出开发口令」的过时说法全部改正。 |
+
+**三个历史弱值仍以字面量出现在仓库里，但只作黑名单**：`shared/env.js` 的
+`DEV_STACK_SECRET`、`provision-app-roles.mjs` 的 `DEV_PASSWORDS`、`deploy-prepare.mjs`
+的 `SECRET_BANNED`。它们用于拒绝「有人把旧值粘进生产配置」；删掉等于少一道护栏。
+`verify.mjs` 第 9 条只禁「把值当凭据用」的写法，黑名单集合 / 注释 / 测试断言放行。
+
+### 行为变化（只有两处）
+
+1. 生产直接跑 `migrate.mjs` 且角色不存在时，从「静默建出弱口令」变成**显式报错**。
+   正确顺序本来就是先 `provision-app-roles.mjs`，这次把它变成强制的。
+2. 本机演示栈的 4 个凭据从固定公开值变成**随机值**，首次生成后持久化；
+   「一条命令起全套」仍然零配置可用，但旧 `.pgdata-dev` 数据目录需 `--reset` 重建
+   （角色口令已变）。
+
+### 验证（真跑）
+
+| 项 | 结果 |
+|---|---|
+| `npm run verify` | **12 项全绿**（第 9 条从「已知差异警告」升级为硬判据，0 条提示） |
+| 判据证伪 ×3 | ① SQL 写回 `PASSWORD 'app_rls_local_dev'`；② `pg-local.js` 写回 `password: '...'`；③ `dev-stack.mjs` 写回 `?? 'dev-stack-secret...'`。三次都恰好第 9 条变红、其余 11 项仍绿，还原后 12 项全绿 |
+| 隔离临时 PG 17 空库 | 不注入口令 ⇒ `002_rls.sql` 报「缺少 app_rls 口令」且事务回滚（已提交迁移仅 `001_schema.sql`）；注入后 **29 个增量迁移全通过 / 43 张表 / 48 条 RLS 策略 / 两个角色口令已设置** |
+| 凭据模块 | 4 个互不相同的随机值 ≥32 字符 / 重启复用 / env 优先且零副作用 |
+| 本机 `dev:stack` 回归 | 复用原工程依赖、独立端口 `--no-ai --no-seed --port 18788 --pg-port 55433 --run` 真跑：29 个迁移全部应用、数据服务 `/health` 200、`STACK_RUN_OK`、自动收栈 rc=0 |
+| 顺带修复 | `pg-local.js` 的 `sqlDir` 指向 `db/migrations/`、`dev-stack.mjs` 的 `gatewayRoot` 指向 `backend/ai-gateway`（迁入后路径错位，原本会让本机栈「迁移无新增却一张表都没有」） |
+| 未跑 | `flutter analyze/test`、云上 FC3、OSS 驱动、完整端到端探针 |
+
+> 验证用的临时 PG 实例、依赖目录联接、`.pgdata-dev`、`.dev-credentials.json`、
+> 附件临时目录均已清理；`git status --ignored` 为空。

@@ -18,8 +18,14 @@ const MIGRATION_TABLE = `
  * 每个文件一个事务：失败则整个文件回滚，不会留下半截 schema。
  * 这也是为什么 sql/*.sql 里不写 BEGIN/COMMIT —— 嵌套事务只会得到一句
  * 「there is already a transaction in progress」的警告，然后事务边界变得不可预期。
+ *
+ * `options.rolePasswords`（`{ appRls, appAuth }`）只由**本机开发栈 / 临时测试库**传：
+ * 它在事务内注入 `app.dev_app_password` / `app.dev_auth_password` 两个 GUC，
+ * 供 002_rls.sql / 003_session.sql 建角色时取用。生产迁移不传 ——
+ * 角色必须先由 provision-app-roles.mjs 带着强口令建好，否则 SQL 显式报错。
+ * 口令走参数而非字符串拼接，含引号也不会破坏 SQL。
  */
-export async function runMigrations(client, sqlDir) {
+export async function runMigrations(client, sqlDir, options = {}) {
   await client.query(MIGRATION_TABLE);
 
   const files = fs
@@ -35,6 +41,14 @@ export async function runMigrations(client, sqlDir) {
     const sql = fs.readFileSync(path.join(sqlDir, name), 'utf8');
     await client.query('begin');
     try {
+      if (options.rolePasswords) {
+        await client.query('select set_config($1, $2, true)', [
+          'app.dev_app_password', options.rolePasswords.appRls ?? '',
+        ]);
+        await client.query('select set_config($1, $2, true)', [
+          'app.dev_auth_password', options.rolePasswords.appAuth ?? '',
+        ]);
+      }
       await client.query(sql);
       await client.query('insert into schema_migrations(name) values ($1)', [name]);
       await client.query('commit');

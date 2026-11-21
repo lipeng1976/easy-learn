@@ -766,14 +766,15 @@ NODE_ENV=production
 
 #### 先建角色、再迁移（顺序不能颠倒）
 
-`sql/002_rls.sql` 与 `003_session.sql` 里那句 `CREATE ROLE ... PASSWORD` 用的是
-**开发口令**（`app_rls_local_dev` / `app_auth_local_dev`），为的是本机可复现。
-两处都被 `DO $$ IF NOT EXISTS (...) $$` 包着 → **角色已存在时整句跳过**。于是：
+`db/migrations/002_rls.sql` 与 `003_session.sql` 里那句 `CREATE ROLE ... PASSWORD` 的
+口令由迁移器在事务内 `set_config` 注入，**SQL 里没有任何可用口令**；没注入、角色也不存在时
+迁移会显式报错，不会兜底。两处都被 `DO $$ IF NOT EXISTS (...) $$` 包着 →
+**角色已存在时整句跳过**。于是：
 
-- **先跑 `provision-app-roles.mjs`**：角色带着**你的强口令**建出来，迁移里那句直接跳过，
-  开发口令**一次都没落过地**；
-- 反过来（先迁移、再改口令）也能用，但开发口令会真的进云端库，
-  中间存在一个「知道源码的人就能连上」的窗口（只要网络能到）。
+- **先跑 `provision-app-roles.mjs`**：角色带着**你的强口令**建出来，迁移里那句直接跳过 ——
+  这是生产唯一允许的顺序；
+- 反过来直接跑迁移：要么报错（没注入口令），要么用的是本机开发栈随机生成的口令，
+  **绝不能带到云端库**。
 
 ```bash
 cd serverless/data-service

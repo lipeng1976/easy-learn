@@ -4,8 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import EmbeddedPostgres from 'embedded-postgres';
 
+import { loadDevCredentials } from '../../shared/dev-credentials.js';
+
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const sqlDir = path.resolve(here, '..', 'sql');
+// 迁入四分区后 SQL 在 db/migrations/（原工程是 serverless/data-service/sql/）。
+// 这个路径写错的现象是「迁移：无新增」但一张表都没有 —— 不报错。
+export const sqlDir = path.resolve(here, '..', '..', '..', 'db', 'migrations');
 
 /**
  * 本机 PostgreSQL（真实 PG 17 二进制，由 npm 包提供）。
@@ -69,9 +73,21 @@ export const LOCAL_PG = {
    */
   reconcilePort: 55435,
   database: 'easy_learn',
-  admin: { user: 'postgres', password: 'postgres' },
-  app: { user: 'app_rls', password: 'app_rls_local_dev' },
-  auth: { user: 'app_auth', password: 'app_auth_local_dev' },
+  // 口令**不在源码里**：由 shared/dev-credentials.js 从环境变量或本机
+  // `.dev-credentials.json` 取（首次随机生成、之后复用）。用 getter 保持
+  // `LOCAL_PG.app.password` 这个既有读法不变，所有本地脚本自动走同一份值。
+  admin: {
+    user: 'postgres',
+    get password() { return loadDevCredentials().adminPassword; },
+  },
+  app: {
+    user: 'app_rls',
+    get password() { return loadDevCredentials().appRlsPassword; },
+  },
+  auth: {
+    user: 'app_auth',
+    get password() { return loadDevCredentials().appAuthPassword; },
+  },
 };
 
 /**
@@ -204,7 +220,13 @@ export async function withMigratedDatabase(fn, options = {}) {
     const client = pg.getPgClient(database);
     await client.connect();
     try {
-      const applied = await runMigrations(client, sqlDir);
+      const credentials = loadDevCredentials();
+      const applied = await runMigrations(client, sqlDir, {
+        rolePasswords: {
+          appRls: credentials.appRlsPassword,
+          appAuth: credentials.appAuthPassword,
+        },
+      });
       return await fn(client, { applied, port: options.port ?? LOCAL_PG.port, database });
     } finally {
       await client.end();

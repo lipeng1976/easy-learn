@@ -534,9 +534,9 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
      node scripts/provision-app-roles.mjs --env-file .env.prod --yes   # 先建角色（带强口令）
      node scripts/migrate.mjs --env-file .env.prod --dry-run           # 只读，先看
      node scripts/migrate.mjs --env-file .env.prod --yes               # 真跑
-   ⚠️ 为什么先建角色：sql 文件里那句 CREATE ROLE 用的是**开发口令**，而它被
-      `IF NOT EXISTS` 包着 —— 角色已存在就整句跳过，开发口令**一次都不会落地**。
-      反过来（先迁移、再改口令）也能用，但中间有一个窗口：知道源码里那串口令的人就能连上。
+   ⚠️ 为什么先建角色：迁移 SQL 不含口令，靠运行期注入；生产路径不注入，
+      所以角色必须先由 provision-app-roles.mjs 带着强口令建好（那时 CREATE ROLE
+      被 `IF NOT EXISTS` 整句跳过）。反过来直接迁移会显式报错，不会兜底。
    判据（2026-09-24 实测）：迁移记录条数 = sql 文件数（10 → 10）· public 下 26 张表 ·
       25 张启用 RLS 且 **25 张都是 FORCE**（第 26 张是 schema_migrations，它不需要）·
       app_rls 的 rolbypassrls=false、app_auth 的 =true、两个都不是超级用户

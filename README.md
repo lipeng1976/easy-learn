@@ -82,18 +82,21 @@ flutter run --dart-define=...   # 变量名见 lib/services/ 下的 data_config 
 
 ## 4. 环境变量
 
-- `.env.example` 是**唯一允许提交**的 env 文件，全部为 `CHANGE_ME` 占位符。
+- `.env.example` 是**唯一允许提交**的 env 文件；值要么是 `CHANGE_ME` 占位符，要么留空由本机栈运行期生成。
 - 真实工程里环境变量由各模块直接读取（见 `backend/shared/env.js`、`src/config*.js`、
   `backend/data-service/scripts/check-config.mjs`）；**完整必需变量清单以 `check-config.mjs` 为准**。
 - 密钥不得写进代码或 SQL；生产口令从云控制台 / 环境变量注入，两服务共用同一把 `AI_SESSION_SECRET`（≥32 字符）。
-- ⚠️ 迁移保留了原工程的**本机开发公开弱口令**（`app_rls_local_dev` 等，见 `db/migrations/002_rls.sql`、
-  `003_session.sql` 与 `src/pg-local.js`）。它们是本机「一条起全套」的既有设计，**不要用于生产**。
+- **本机凭据已无硬编码**：`backend/shared/dev-credentials.js` 统一提供 4 个值（3 个 PG 角色口令 + 会话密钥），
+  环境变量优先；本机没配时随机生成一次并持久化到 `.dev-credentials.json`（gitignore，重启复用）。
+  迁移 SQL 的口令由 `migrate.js` 在事务内 `set_config` 注入，不注入就显式报错、绝不兜底。
+  仓库里保留的三个历史弱值只作**黑名单**，用于拒绝把它们粘进生产配置。
 - 可选能力（ima / AI 厂商）未配置时静默降级，但降级结果必须标 `degraded:true`，不许冒充模型输出。
 
 ## 5. 数据库初始化
 
 - **当前真值**：`db/migrations/001~029.sql`，由 `src/migrate.js` 在事务内按文件名顺序执行；文件不自带 `BEGIN/COMMIT`。
-- 顺序陷阱：先 `provision-app-roles` 再 `migrate`；`app_rls` 必须是非 superuser、非表 owner，否则 RLS 静默失效。
+- 顺序陷阱：先 `provision-app-roles` 再 `migrate`（SQL 不含口令、角色不存在时显式报错）；
+  `app_rls` 必须是非 superuser、非表 owner，否则 RLS 静默失效。
 - `docs/baseline/db/001_schema.sql` 是**合并终态**，只作目标形态参考，**不能对已有库直接执行**。
 - 附件路径规范（统一 `relative_path` + `rel_path` 域）尚未在迁入源码里落地，差异清单见 `docs/migration.md` §4。
 

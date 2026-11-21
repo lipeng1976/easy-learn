@@ -19,6 +19,8 @@ secrets/
 credentials/
 s.yaml
 serverless*.yaml
+# 本机演示栈的运行期凭据：首次随机生成、之后复用，绝不入库
+/.dev-credentials.json
 
 # 运行期数据（附件根目录、本地数据库、导出物）
 var/

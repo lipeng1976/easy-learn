@@ -197,14 +197,14 @@ console.log('  CORS_ALLOW_ORIGIN=https://<你的 Web 域名>    ← 写具体来
 head('④ 逐步部署命令（按这个顺序）');
 
 console.log(`
-  第 1 步 · 云数据库建表与建角色
+  第 1 步 · 云数据库建角色（先）与建表（后）
     cd serverless/data-service
-    node scripts/migrate.mjs --env-file .env.prod --dry-run   # 先看会做什么（只读）
-    node scripts/migrate.mjs --env-file .env.prod --yes       # 真执行
+    node scripts/provision-app-roles.mjs --env-file .env.prod --yes   # 先建带强口令的角色
+    node scripts/migrate.mjs --env-file .env.prod --dry-run            # 再看会做什么（只读）
+    node scripts/migrate.mjs --env-file .env.prod --yes                 # 真执行
 
-    ⚠️ 迁移建出来的两个角色用的是**开发口令**，跑完立刻改：
-      ALTER ROLE app_rls  WITH PASSWORD '<强口令，与 PG_PASSWORD 一致>';
-      ALTER ROLE app_auth WITH PASSWORD '<另一个，与 PG_AUTH_PASSWORD 一致>';
+    ⚠️ 顺序不能反：迁移 SQL 不含任何口令，角色不存在且未注入口令时会报错，
+       不会静默用默认值。绝不要拿本机开发栈随机生成的口令去连云端库。
 
   第 2 步 · 备一份 .env.prod，然后跑上传前体检
     cp .env.prod.example .env.prod      # 照着模板填（模板进版本库，.env.prod 不会）

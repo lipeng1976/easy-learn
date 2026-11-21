@@ -49,6 +49,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import EmbeddedPostgres from 'embedded-postgres';
 
+import { loadDevCredentials } from '../../shared/dev-credentials.js';
 import { runMigrations } from '../src/migrate.js';
 import { LOCAL_PG, forceStopPostgres, removeDirWithRetry, sqlDir } from '../src/pg-local.js';
 import { DEMO, seedDemo } from './seed-demo.mjs';
@@ -128,12 +129,16 @@ const LAN_IP = LAN ? (lanAddress()?.address ?? null) : null;
 const WEB_PORT = Number(opt('web-port', 8088));
 const DATA_DIR = path.join(serviceRoot, '.pgdata-dev');
 /**
- * 会话签名密钥：演示用固定值。
+ * 会话签名密钥与三个本机 PG 角色口令，统一由 shared/dev-credentials.js 提供：
+ * 环境变量优先；本机没配时随机生成一次并持久化到 `.dev-credentials.json`。
  *
- * **不能每次随机** —— 一重启就换密钥，等于把所有已登录设备踢下线；
- * 演示时最烦的就是「刚发的 token 又不好用了」。生产必须由环境变量注入。
+ * **不能每次随机就换** —— 一重启就换密钥，等于把所有已登录设备踢下线；
+ * 角色口令换了，复用数据目录的旧库也连不上。所以生成一次、之后复用。
+ * 仓库里不再有任何可用的密钥字面量。生产必须显式配 `AI_SESSION_SECRET`
+ * 等四个变量，服务侧的 config-check 会拦住缺失的情况。
  */
-const SESSION_SECRET = process.env.AI_SESSION_SECRET ?? 'dev-stack-secret-not-for-production';
+const DEV_CREDENTIALS = loadDevCredentials();
+const SESSION_SECRET = DEV_CREDENTIALS.sessionSecret;
 /**
  * 作业照片字节的落盘根目录（见 `src/imagestore.js`）。
  *
@@ -284,6 +289,10 @@ if (aiPortTaken) {
 
 // ===== ① 起库 =====
 
+if (DEV_CREDENTIALS.source === 'local') {
+  log('本机凭据：.dev-credentials.json（随机生成一次并复用，不入库；可用环境变量覆盖）');
+}
+
 if (flag('reset')) {
   log(`清库：${DATA_DIR}`);
   if (!(await removeDirWithRetry(DATA_DIR, { attempts: 3, budgetMs: 6000 }))) {
@@ -337,7 +346,12 @@ log(`PostgreSQL 已就绪（端口 ${PG_PORT}，库 ${LOCAL_PG.database}）`);
   const client = pg.getPgClient(LOCAL_PG.database);
   await client.connect();
   try {
-    const applied = await runMigrations(client, sqlDir);
+    const applied = await runMigrations(client, sqlDir, {
+      rolePasswords: {
+        appRls: DEV_CREDENTIALS.appRlsPassword,
+        appAuth: DEV_CREDENTIALS.appAuthPassword,
+      },
+    });
     log(applied.length === 0 ? '迁移：无新增' : `迁移：应用了 ${applied.join(' / ')}`);
   } finally {
     await client.end();
@@ -387,7 +401,7 @@ log(`数据服务已监听 http://127.0.0.1:${DATA_PORT}`);
 
 let aiUp = reuseAi;
 if (!flag('no-ai') && !reuseAi && !aiPortBlocked) {
-  const gatewayRoot = path.join(repoRoot, 'serverless', 'ai-gateway');
+  const gatewayRoot = path.join(repoRoot, 'backend', 'ai-gateway');
   if (fs.existsSync(path.join(gatewayRoot, 'src', 'dev-server.js'))) {
     const ai = spawn(process.execPath, ['src/dev-server.js'], {
       cwd: gatewayRoot,

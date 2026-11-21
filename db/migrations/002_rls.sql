@@ -21,11 +21,21 @@
 -- 执行方式：由 src/migrate.js 在事务内按文件名顺序执行，本文件**不要自带 BEGIN/COMMIT**。
 
 -- ===== 应用角色 =====
--- 生产环境请在云控制台创建并设强口令；这里的口令只为本机开发可复现。
+-- 口令由迁移器在事务内 `set_config('app.dev_app_password', ...)` 注入，
+-- **SQL 里不写任何可用口令**。生产必须先跑 provision-app-roles.mjs 用强口令
+-- 建好角色，那时本块整体跳过，开发口令一次都不会落地。
+--
+-- 既没跑 provision、也没注入口令 ⇒ 显式报错，绝不退回默认值：
+-- 角色带弱口令建出来是「连得上、不报错、谁都能连」的静默失效。
 DO $$
+DECLARE
+  pw text := nullif(current_setting('app.dev_app_password', true), '');
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'app_rls') THEN
-    CREATE ROLE app_rls LOGIN PASSWORD 'app_rls_local_dev';
+    IF pw IS NULL THEN
+      RAISE EXCEPTION '缺少 app_rls 口令：请先跑 provision-app-roles.mjs，或由开发栈注入 APP_RLS_PASSWORD';
+    END IF;
+    EXECUTE format('CREATE ROLE app_rls LOGIN PASSWORD %L', pw);
   END IF;
 END
 $$;

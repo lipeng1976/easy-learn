@@ -4,16 +4,13 @@
  *
  * ## 为什么需要它（以及为什么顺序是「先跑它、后跑 migrate」）
  *
- * `sql/002_rls.sql` 与 `sql/003_session.sql` 里那句 `CREATE ROLE ... PASSWORD`
- * 用的是**开发口令**（`app_rls_local_dev` / `app_auth_local_dev`）—— 为的是本机可复现。
+ * `db/migrations/002_rls.sql` 与 `003_session.sql` 里那句 `CREATE ROLE ... PASSWORD`
+ * 的口令由迁移器在事务内注入（本机开发栈的随机凭据），**SQL 里没有任何可用口令**；
+ * 没注入、角色也不存在时 SQL 会显式报错，不会退回默认值。
  * 两处都被 `DO $$ IF NOT EXISTS (...) $$` 包着，所以**角色已存在时整句跳过**。
  *
- * 于是有两种顺序：
- *
- *   先迁移后改口令：开发口令会真的写进云端库，存在的窗口是「迁移完成 → 改口令」
- *                  这段，期间任何一个知道源码的人都能连上（只要网络能到）。
- *   先本脚本后迁移：角色带着强口令建出来，迁移里那句 CREATE ROLE 直接跳过，
- *                  **开发口令一次都没落过地**。
+ * 生产顺序只有一种：先本脚本、后迁移。角色带着环境变量里的强口令建出来，
+ * 迁移里那句 CREATE ROLE 直接跳过，本机凭据一次都不会落到云端库上。
  *
  * 本脚本存在的意义就是把第二条路变成一条命令。
  *
@@ -42,7 +39,11 @@ import { cloudHost, loadEnv, valueOf } from './lib/env-file.mjs';
 import { resolveMigrationTarget } from '../src/migrate.js';
 import { isProduction } from '../../shared/env.js';
 
-/** 写死在 sql 文件里的开发口令。**它们出现在云端库上就说明这条路走错了。** */
+/**
+ * 历史公开弱口令，只作为**黑名单**用于最后一项验证：换完强口令后，
+ * 用它们应该连不上。连得上说明 pg_hba 是 trust、口令认证根本没生效。
+ * 它们不再被任何代码当作凭据使用；留在这里是为了继续挡住旧库/旧配置。
+ */
 const DEV_PASSWORDS = new Set(['app_rls_local_dev', 'app_auth_local_dev']);
 
 /** 口令最短长度。比 24 短的随机串熵不足；人挑的口令更短。 */

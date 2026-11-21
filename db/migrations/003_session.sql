@@ -84,11 +84,17 @@ CREATE POLICY session_own ON user_session
 -- ⚠️ 另一个顺序陷阱：`ALTER DEFAULT PRIVILEGES`（002 文件里那一句）只作用于
 -- app_rls，所以本文件新建的 user_session 对 app_auth 不会自动获得权限 ——
 -- 这正是我们要的，下面的 GRANT 是显式的、可审计的。
+-- 与 002_rls.sql 同一口径：口令由迁移器注入，SQL 不写任何可用口令。
+-- 生产先跑 provision-app-roles.mjs 建角色，本块跳过；没建也没注入则显式报错。
 DO $$
+DECLARE
+  pw text := nullif(current_setting('app.dev_auth_password', true), '');
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'app_auth') THEN
-    -- 生产环境请在云控制台创建并设强口令；这里的口令只为本机开发可复现。
-    CREATE ROLE app_auth LOGIN PASSWORD 'app_auth_local_dev' BYPASSRLS;
+    IF pw IS NULL THEN
+      RAISE EXCEPTION '缺少 app_auth 口令：请先跑 provision-app-roles.mjs，或由开发栈注入 APP_AUTH_PASSWORD';
+    END IF;
+    EXECUTE format('CREATE ROLE app_auth LOGIN PASSWORD %L BYPASSRLS', pw);
   END IF;
 END
 $$;

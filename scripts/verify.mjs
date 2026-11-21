@@ -35,6 +35,11 @@ function walk(dir, out = []) {
 const allFiles = walk(ROOT);
 const rels = allFiles.map(rel);
 const countIn = (prefix) => rels.filter((r) => r.startsWith(`${prefix}/`)).length;
+// 这些是 dev:stack / PG 运行期生成的本机数据，本来就该被忽略；
+// 把它们送进 check-ignore 会把「正常运行」误报成「交付文件漏入库」。
+const runtimeArtifact = (r) => r === '.dev-credentials.json'
+  || r.startsWith('.pgdata') || r.startsWith('var/') || r.startsWith('logs/');
+const checkIgnoreCandidates = rels.filter((r) => !runtimeArtifact(r));
 
 // ── 1. 全量源码规模（用下限，新增文件不会误报，漏文件会报）────────────────
 const SCALE = [
@@ -192,12 +197,36 @@ const missingSeq = expected.filter((n) => !migrationNames.includes(n));
 if (missingSeq.length) failures.push(`增量迁移缺号：${missingSeq.join(', ')}`);
 else passes.push('db/migrations 001~029 序列完整');
 
-// ── 9. 已知差异：本机开发口令（不计失败，如实提示）────────────────────────
-const sqlFiles = allFiles.filter((f) => f.endsWith('.sql'));
-const rolePw = sqlFiles.filter((f) => /PASSWORD\s+'/i.test(read(f))).map(rel);
-if (rolePw.length) {
-  warnings.push(`本机开发角色口令写在 ${rolePw.join(', ')}（公开弱口令、原工程既有设计；生产口令从环境变量/云控制台注入，详见 docs/migration.md）`);
+// ── 9. 凭据字面量：禁止任何「可用的」口令 / 密钥硬编码 ───────────────────
+// 11-21 已收敛：SQL 口令由运行期 set_config 注入；开发栈凭据随机生成并持久化；
+// 三个历史弱值只保留为**黑名单**（拒绝把它们粘进生产配置），不再当凭据用。
+// 判据只禁三种「把值当凭据用」的写法，黑名单集合 / 注释 / 测试断言不命中。
+const weakDefaults = [
+  /\?\?\s*['"]dev-stack-secret-not-for-production['"]/,      // 会话密钥默认值
+  /password:\s*['"]app_(?:rls|auth)_local_dev['"]/,          // 本机组态默认值
+];
+const credHits = [];
+// a) 迁移 SQL 一律由 set_config 取口令，不得含任何 PASSWORD 字面量。
+//    运维脚本里 `ALTER ROLE ... PASSWORD '<强口令>'` 是给人的示例，不在扫描范围。
+for (const f of codeFiles.filter((f) => {
+  const r = rel(f);
+  return r.startsWith('db/migrations/') && r.endsWith('.sql');
+})) {
+  read(f).split(/\r?\n/).forEach((line, i) => {
+    if (/PASSWORD\s+'/i.test(line)) credHits.push(`${rel(f)}:${i + 1}`);
+  });
 }
+// b) 三个历史弱值不许再被当作运行期默认值；黑名单集合 / 注释 / 测试断言放行。
+for (const f of codeFiles) {
+  const r = rel(f);
+  if (r.startsWith('docs/baseline/') || r.includes('/test/')) continue;
+  read(f).split(/\r?\n/).forEach((line, i) => {
+    if (/^(\/\/|\*|#|--)/.test(line.trim())) return;
+    if (weakDefaults.some((p) => p.test(line))) credHits.push(`${r}:${i + 1}`);
+  });
+}
+if (credHits.length) failures.push(`代码/SQL 里仍有可用的凭据字面量：${credHits.join(', ')}`);
+else passes.push('无硬编码凭据（口令运行期注入；历史弱值仅作黑名单）');
 
 // ── 10. 入库完整性：交付文件不得被 .gitignore 误忽略 ─────────────────────
 // 「文件在磁盘上」≠「会进版本库」。11-21 曾因 backend/.gitignore 的 storage/
@@ -208,7 +237,7 @@ if (fs.existsSync(path.join(ROOT, '.git'))) {
     stdout = execFileSync(
       'git',
       ['check-ignore', '--no-index', '-z', '--stdin'],
-      { cwd: ROOT, input: Buffer.from(`${rels.join('\0')}\0`), encoding: 'utf8' },
+      { cwd: ROOT, input: Buffer.from(`${checkIgnoreCandidates.join('\0')}\0`), encoding: 'utf8' },
     );
   } catch (err) {
     // 退出码 1 = 没有任何文件被忽略（正常结果）。

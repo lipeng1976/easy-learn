@@ -10,8 +10,10 @@
   `app_rls` 必须是非 superuser、非表 owner；`app_auth` 带 `BYPASSRLS`，只用于认证路径。
 - 多家庭隔离靠 PG RLS，应用必须在事务内 `SET LOCAL app.visible_students` / `app.user_id`。
   用 superuser 连接会让 RLS **静默失效**（不报错、只是数据全可见）。
-- `002_rls.sql` / `003_session.sql` 里的 `app_rls_local_dev` / `app_auth_local_dev` 是
-  **本机开发公开弱口令**，原工程既有设计；生产口令从云控制台 / 环境变量注入，不要复用。
+- `002_rls.sql` / `003_session.sql` **不含任何口令**：口令由 `migrate.js` 在事务内
+  `set_config('app.dev_app_password' / 'app.dev_auth_password')` 注入，值来自
+  `backend/shared/dev-credentials.js`（环境变量或本机随机凭据）。没注入且角色不存在时
+  迁移显式报错，绝不退回弱口令。生产顺序仍是先 `provision-app-roles` 再 `migrate`。
 - 时间窗参数：`date >= $2` 必须写 `$2::date`，写成 `$2::text` 会报 `42883`。
 - 客户端时间必须写带时区的 ISO8601，否则 `TIMESTAMPTZ` 会按服务端时区解释，产生不报错的偏移。
 

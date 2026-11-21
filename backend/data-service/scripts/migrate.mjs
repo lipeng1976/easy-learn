@@ -43,8 +43,9 @@
  * 1. **要管理员身份**。`002_rls.sql` / `003_session.sql` 会创建
  *    `app_rls`（普通角色）与 `app_auth`（`BYPASSRLS`），后者只有超级用户
  *    才授得出来。所以这条命令用的连接**刻意是管理连接**，不是应用角色。
- * 2. **迁移建出来的角色口令是开发口令**（写在 sql 文件里，为的是本机可复现）。
- *    生产必须在迁移之后改掉 —— 命令末尾会把这句 SQL 打出来，别跳过。
+ * 2. **迁移 SQL 不含任何口令**。`002_rls.sql` / `003_session.sql` 的口令由
+ *    运行期 `set_config` 注入；本脚本（生产路径）不注入，所以角色必须已由
+ *    `provision-app-roles.mjs` 带着强口令建好，否则迁移显式报错、绝不兜底。
  */
 import pg from 'pg';
 import path from 'node:path';
@@ -202,14 +203,12 @@ try {
   console.log(`
 ⚠️  接下来必须做的两件事（迁移脚本不会替你做）：
 
-  1) **改掉两个角色的口令。** sql 文件里写的是开发口令（为的是本机可复现），
-     而生产库上它们就是公开的：
-
-       ALTER ROLE app_rls  WITH PASSWORD '<强口令，与 PG_PASSWORD 一致>';
-       ALTER ROLE app_auth WITH PASSWORD '<另一个强口令，与 PG_AUTH_PASSWORD 一致>';
-
+  1) **确认两个角色的口令是平台环境变量里那两把强口令。**
+     生产顺序是「先 provision-app-roles.mjs，后 migrate.mjs」：迁移 SQL 不含
+     任何口令，角色不存在且没注入口令时会显式报错，绝不退回默认值。
+     本机 / 临时测试库的角色口令由运行期注入（随机生成），绝不能带到云端库。
      数据服务用这两个角色连库（app_rls 走 RLS，app_auth 只碰三张账号表）。
-     改完记得同步平台的「环境变量」，两处不一致的症状是「连接被拒」。
+     库里口令与平台环境变量不一致的症状是「连接被拒」。
 
   2) **确认 RLS 真的在生效。** 用**非超级用户**的 app_rls 连一次库查一张表：
      超级用户会**静默绕过** RLS（连 FORCE ROW LEVEL SECURITY 都拦不住），
