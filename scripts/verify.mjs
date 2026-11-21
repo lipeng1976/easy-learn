@@ -35,10 +35,38 @@ function walk(dir, out = []) {
 const allFiles = walk(ROOT);
 const rels = allFiles.map(rel);
 const countIn = (prefix) => rels.filter((r) => r.startsWith(`${prefix}/`)).length;
-// 这些是 dev:stack / PG 运行期生成的本机数据，本来就该被忽略；
-// 把它们送进 check-ignore 会把「正常运行」误报成「交付文件漏入库」。
+
+// 磁盘上「存在」与「会入库」是两件事。Flutter 构建会在 frontend/build/、
+// frontend/.dart_tool/ 下生成上千个文件，签名材料也刻意放在 android/ 下但不入库。
+// 禁入项 / 大文件 / 代码扫描必须以**会入库的文件**为准，否则每次打完包自检都变红，
+//  red 到最后大家就会习惯性忽略它 —— 那才是真正的静默失败。
+// 判据仍然有效：没被 git 忽略的密钥 / 构建产物照样会被下面的禁入项抓住。
+function gitIgnored(paths) {
+  if (!fs.existsSync(path.join(ROOT, '.git')) || paths.length === 0) return new Set();
+  try {
+    const out = execFileSync('git', ['check-ignore', '--no-index', '-z', '--stdin'], {
+      cwd: ROOT,
+      input: Buffer.from(`${paths.join('\0')}\0`),
+      encoding: 'utf8',
+    });
+    return new Set(String(out).split('\0').filter(Boolean).map((p) => p.replace(/\\/g, '/')));
+  } catch (err) {
+    // 退出码 1 = 没有任何文件被忽略（正常结果）。
+    if (err.status === 1) return new Set();
+    failures.push(`git check-ignore 执行失败：${String(err.stderr ?? err.message).split('\n')[0]}`);
+    return new Set();
+  }
+}
+const ignoredAll = gitIgnored(rels);
+const deliverables = rels.filter((r) => !ignoredAll.has(r));
+const deliverableFiles = allFiles.filter((f) => !ignoredAll.has(rel(f)));
+
+// 这些是 dev:stack / PG / Flutter 构建运行期生成的本机数据，本来就该被忽略；
+// 把它们送进第 10 条的入库检查会把「正常运行」误报成「交付文件漏入库」。
 const runtimeArtifact = (r) => r === '.dev-credentials.json'
-  || r.startsWith('.pgdata') || r.startsWith('var/') || r.startsWith('logs/');
+  || r.startsWith('.pgdata') || r.startsWith('var/') || r.startsWith('logs/')
+  || r.startsWith('frontend/build/') || r.startsWith('frontend/.dart_tool/')
+  || r.startsWith('frontend/android/.gradle/') || r.startsWith('frontend/ios/Flutter/');
 const checkIgnoreCandidates = rels.filter((r) => !runtimeArtifact(r));
 
 // ── 1. 全量源码规模（用下限，新增文件不会误报，漏文件会报）────────────────
@@ -116,23 +144,23 @@ const BANNED = [
   [/(^|\/)site(-old-[^/]*)?\//, 'Web 发布产物'],
 ];
 const bannedHits = [];
-for (const r of rels) {
+for (const r of deliverables) {
   for (const [pattern, label] of BANNED) {
     if (pattern.test(r)) bannedHits.push(`${r}（${label}）`);
   }
 }
 if (bannedHits.length) failures.push(`禁入项混进仓库：${bannedHits.slice(0, 12).join(', ')}${bannedHits.length > 12 ? ` …共 ${bannedHits.length} 项` : ''}`);
-else passes.push('无禁入项（密钥 / APK / 数据库 / 日志 / 构建产物）');
+else passes.push(`无禁入项（密钥 / APK / 数据库 / 日志 / 构建产物；磁盘上另有 ${rels.length - deliverables.length} 个被 git 忽略的本机产物）`);
 
 // 单文件体积：源码仓库不该出现 >5MB 的二进制。
-const bigFiles = allFiles
+const bigFiles = deliverableFiles
   .filter((f) => fs.statSync(f).size > 5 * 1024 * 1024)
   .map((f) => `${rel(f)} ${(fs.statSync(f).size / 1024 / 1024).toFixed(1)}MB`);
 if (bigFiles.length) failures.push(`超大文件：${bigFiles.join(', ')}`);
 else passes.push('无 >5MB 的大文件');
 
 // ── 4. JS / CJS 语法（全量）─────────────────────────────────────────────
-const jsFiles = allFiles.filter((f) => /\.(js|mjs|cjs)$/.test(f));
+const jsFiles = deliverableFiles.filter((f) => /\.(js|mjs|cjs)$/.test(f));
 const syntaxErrors = [];
 for (const f of jsFiles) {
   try {
@@ -146,7 +174,7 @@ else passes.push(`JS 语法检查通过（${jsFiles.length} 个文件）`);
 
 // ── 5. 密钥字面量（生产密钥形式）─────────────────────────────────────────
 const secretPattern = /(sk-[A-Za-z0-9]{16,}|AKID[A-Za-z0-9]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
-const codeFiles = allFiles.filter((f) => /\.(js|mjs|cjs|dart|sql|json|yaml)$/.test(f));
+const codeFiles = deliverableFiles.filter((f) => /\.(js|mjs|cjs|dart|sql|json|yaml)$/.test(f));
 const secretHits = codeFiles.filter((f) => secretPattern.test(read(f)));
 if (secretHits.length) failures.push(`疑似硬编码生产密钥：${secretHits.map(rel).join(', ')}`);
 else passes.push('无生产密钥字面量');
@@ -232,21 +260,7 @@ else passes.push('无硬编码凭据（口令运行期注入；历史弱值仅�
 // 「文件在磁盘上」≠「会进版本库」。11-21 曾因 backend/.gitignore 的 storage/
 // 连带忽略 src/storage/ 源码目录，exist 检查全绿但入库漏文件。
 if (fs.existsSync(path.join(ROOT, '.git'))) {
-  let stdout = '';
-  try {
-    stdout = execFileSync(
-      'git',
-      ['check-ignore', '--no-index', '-z', '--stdin'],
-      { cwd: ROOT, input: Buffer.from(`${checkIgnoreCandidates.join('\0')}\0`), encoding: 'utf8' },
-    );
-  } catch (err) {
-    // 退出码 1 = 没有任何文件被忽略（正常结果）。
-    stdout = String(err.stdout ?? '');
-    if (err.status !== 1) {
-      failures.push(`git check-ignore 执行失败：${String(err.stderr ?? err.message).split('\n')[0]}`);
-    }
-  }
-  const ignored = stdout.split('\0').filter(Boolean);
+  const ignored = checkIgnoreCandidates.filter((r) => ignoredAll.has(r));
   const badIgnored = ignored.filter((p) => /\.(js|mjs|cjs|dart|sql|md|yaml|json)$/.test(p));
   if (badIgnored.length) failures.push(`交付文件被 .gitignore 忽略，将漏入库：${badIgnored.slice(0, 10).join(', ')}`);
   else passes.push('全部交付文件可被 git 跟踪（无 .gitignore 误伤）');

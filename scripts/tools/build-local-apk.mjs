@@ -32,10 +32,10 @@
 // ## 用法
 //
 // ```bash
-// node tools/build-local-apk.mjs --host 192.168.3.80            # 局域网
-// node tools/build-local-apk.mjs --host 100.88.1.23            # 组网（Tailscale 等）
-// node tools/build-local-apk.mjs --host 192.168.3.80 --dry-run # 只校验，不构建
-// node tools/build-local-apk.mjs --host 192.168.3.80 --out     # 另拷一份到 D:\easy_learn_home\dist
+// node scripts/tools/build-local-apk.mjs --host 192.168.3.80            # 局域网（在仓库根执行）
+// node scripts/tools/build-local-apk.mjs --host 100.88.1.23            # 组网（Tailscale 等）
+// node scripts/tools/build-local-apk.mjs --host 192.168.3.80 --dry-run # 只校验，不构建
+// node scripts/tools/build-local-apk.mjs --host 192.168.3.80 --out     # 另拷一份到 D:\easy_learn_home\dist
 // ```
 //
 // 可选开关：`--icon none`（不换图标/应用名）· `--same-app`（沿用云版包名）·
@@ -55,7 +55,12 @@ import net from 'node:net';
 import { inflateRawSync, inflateSync } from 'node:zlib';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, '..');
+// 移交后的布局：本脚本在 `scripts/tools/`，Flutter 项目在 `frontend/`。
+// 旧仓是「脚本 tools/ 与 android/ 同级」，所以这里不能再用 `resolve(here, '..')`
+// —— 那会指向 scripts/，图标/清单/ Gradle 补丁全部打不到文件，报错还会像「构建失败」。
+// 保留 repoRoot 这个名字，是因为脚本下面所有路径（res / manifest / gradle /
+// flutter cwd / apk 产物）指的都是**同一个 Flutter 项目根**。
+const repoRoot = resolve(here, '..', '..', 'frontend');
 
 const argv = process.argv.slice(2);
 const hasFlag = (f) => argv.includes(f);

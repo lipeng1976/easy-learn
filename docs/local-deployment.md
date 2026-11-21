@@ -93,3 +93,44 @@ New-Item -ItemType Junction `
 
 > 切换前已把 5 个部署脚本备份到
 > `D:\workbuddy-project\handover\_backup-local-deploy-20261121\`（无密钥）。
+
+## 7. 客户端 APK：用新目录出包（2026-11-21 真跑）
+
+**命令（仓库根执行，本机版·FRP）：**
+
+```bash
+node scripts/tools/build-local-apk.mjs \
+  --host 8.138.227.136 --data-port 13390 --ai-port 13391 \
+  --instance-id easylearn-home-36148178 --out
+```
+
+- 脚本已按移交后的布局修正：`scripts/tools/` 为脚本目录，**Flutter 项目根是 `frontend/`**。
+  `build-local-apk.mjs` 与 `make-app-icon.mjs` 都从这里定位 `android/`、manifest、
+  `network_security_config.xml` 和 Gradle；旧布局那套 `resolve(here, '..')` 会指到
+  `scripts/`，补丁全部打空。
+- `--out` 把 APK 另存到 `D:\easy_learn_home\dist\easy-learn-local-<host>-<时间>.apk`；
+  构建产物本体在 `frontend/build/app/outputs/flutter-apk/app-release.apk`。
+- `--data-port/--ai-port` **不能省**：FRP 对外是 13390/13391，脚本默认 8788/8787
+  （那是本机直连端口，手机上不通）。`--instance-id` 与 `config/local.env` 一致，
+  客户端探测 `/health` 时会核对它，防止连到同网段别人的机器。
+
+**签名材料**（按规则不入库，复制自旧工程，仅本机使用）：
+
+```
+projects/easy_learn_db/android/key.properties          → frontend/android/key.properties
+projects/easy_learn_db/android/app/release-keystore.p12 → frontend/android/app/release-keystore.p12
+```
+
+新包与 `easy-learn-local-20261028.apk` 的 v2 签名证书 SHA-256 完全相同
+（`5E:45:01:5D:…:9C:D3:83`），所以能**直接覆盖安装**，不必先卸载、不会丢数据。
+构建日志里没有「release 但用 debug key」警告，即 Gradle 确实读到了发布签名。
+
+**本次验收：** 预检（FRP 两个 health 200 + 实例标识一致）→ 图标补丁（绿色采样
+`rgb=58,217,160`）→ 应用名「伴学·本机」→ 包名 `cn.easylearn.app.local` →
+release 构建 248s → 包内 `lib/*/libapp.so` 三个 ABI 都含两个 FRP 地址与实例标识 →
+`npm run verify` 12 项全绿。产物 SHA-256
+`0dc249c25fcc8995371606049e41437619df1ed09c3985d933bd916cd33bc84a`。
+
+> `npm run verify` 的禁入项/大文件/绝对路径扫描现在以 **git 会跟踪的文件**为准
+> （`git check-ignore`），因此 `frontend/build/`、`frontend/.dart_tool/`、签名材料
+> 这些本机产物存在时不会误报；未忽略的 `fake.env.prod` 仍会立刻把禁入项判红。

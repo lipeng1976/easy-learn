@@ -43,7 +43,9 @@ import { deflateSync } from 'node:zlib';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+// 移交后的布局：脚本在 `scripts/tools/`，Flutter 项目（android/ 图标所在处）在 `frontend/`。
+// 旧仓脚本位于工程根的 `tools/`，所以原来只上跳一级；这里必须上跳两级再进 frontend。
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'frontend');
 
 // ===== 品牌（改这里即可换配色）=====
 //
