@@ -8,6 +8,7 @@
 |---|---|
 | [`../README.md`](../README.md) | 技术栈、本地启动、环境变量、建库、交接注意事项 |
 | [`migration.md`](migration.md) | ★ 全量源码迁入映射、排除清单、已知规范差异、验收口径 |
+| [`local-deployment.md`](local-deployment.md) | ★ 本机后台启动链路：看门狗新指向、依赖联接、数据库沿用与回滚 |
 | [`DETAIL.md`](DETAIL.md) | ★ 「静默失败」全表与判据纪律（原工程治理沉淀） |
 | [`操作手册.md`](操作手册.md) | 家长端 / 学生端功能操作说明 |
 

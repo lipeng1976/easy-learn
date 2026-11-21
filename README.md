@@ -113,6 +113,8 @@ cd frontend && flutter test    # Windows 需先 unset *_proxy，且要 USERPROFI
 ## 7. 交接注意事项
 
 1. **本仓是唯一开发主目录**；原工程只读参照（里面有含真实密钥的 `.env.prod`，不要 `cp -r`）。
+   本机后台（数据服务 / AI 网关 / 看门狗）已改为从本仓 `backend/` 启动，数据库与配置仍留在
+   `D:\easy_learn_home`；依赖联接、回滚开关、切换判据见 [`docs/local-deployment.md`](docs/local-deployment.md)。
 2. **禁入项**：`.env.prod*` / `s.yaml` / `key.properties` / APK / `*.db` / `build/` / `node_modules/` / `*.log`，
    `npm run verify` 会逐项扫描。
 3. **应用只用 `app_rls`**，身份一律事务内 `SET LOCAL`；superuser 会静默绕过 RLS。
