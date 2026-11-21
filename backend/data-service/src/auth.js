@@ -1,92 +1,86 @@
-/**
- * 会话票据与认证。
- *
- * 票据是无状态 HMAC（v1.<payload>.<sig>），签名密钥只来自 config.sessionSecret。
- * 两个服务必须用同一把密钥，否则一边签的票另一边验不过。
- *
- * 票据里带 visibleStudents：认证后不必再查一次库即可开 RLS 事务。
- * 代价是关系解除后旧票在 TTL 内仍有效 —— 这是明确的取舍，缩短
- * SESSION_TTL_HOURS 或迁入原工程的 user_session 撤销逻辑可收紧。
- */
-
-import crypto from 'node:crypto';
-import { AppError, ERROR_CODES } from '../../shared/errors.js';
-import { getPool, withTenant } from '../../shared/db.js';
-import { signSession, verifySession } from '../../shared/session.js';
-import { verifyPassword } from './password.js';
-
-// 票据签发/校验的真身在 shared/session.js（两个服务共用，不许各写一份）。
-// re-export 只为兼容本服务路由的既有引用。
-export { verifySession } from '../../shared/session.js';
+import { verifySessionToken } from '../../shared/token.js';
+import { badRequest, forbidden, unauthorized } from '../../shared/errors.js';
+import { withAuthConnection } from './db.js';
+import { assertSessionActive } from './session.js';
 
 /**
- * 从请求头解析身份。
- * 开发模式（AI_REQUIRE_AUTH=false）返回一个明确的本地身份，便于联调；
- * 生产模式必须有 Bearer 票据，身份只从签名里取，**不信客户端自报的 studentId**。
+ * 鉴权中间件：从请求里解出**唯一的**身份来源。
+ *
+ * R1 的落地：身份只由 token 给出，**客户端自报的 studentId / role 一律不采用**。
+ * 之前客户端靠 `X-Student-Id` 声明自己是谁，那个值可以随手改成别人的学号；
+ * 数据服务上云后，那个头连读都不读。
+ *
+ * 四点刻意的设计：
+ *  ① **`requireRole: true`** —— 数据服务要拿 role 决定可见集合，
+ *     少了它就只能靠猜，而猜错的后果是越权。缺 role 的 token 判 `token_invalid`
+ *     而不是 `unauthorized`：客户端正确的动作是**重新登录拿到带 role 的新 token**。
+ *  ② 取 `Authorization: Bearer`，与 ai-gateway 完全一致 ——
+ *     两个服务对同一个客户端应该只有一种带凭证的方式。
+ *  ③ **`requireSession: true` + 查一次会话表**（S2）—— 见下。
+ *  ④ 不在这里查业务数据。「身份是谁」来自 token 与会话表，
+ *     「能看到哪些学生」才是查库的结果（见 db.js 的 withRequestContext）。
+ *
+ * ## 为什么验签之后还要查库
+ *
+ * 签名只能证明「这串字节是我签的」，证明不了「这个凭证还能用」——
+ * 用户登出、改密、丢手机，都要求在**服务端**把凭证作废，而签名校验看不见这些。
+ * 所以这里多一次主键查询。它是「可吊销」唯一诚实的价格：
+ * 省掉它，S2 加的那张会话表就只是个装饰。
+ *
+ * 查询用**鉴权连接**而不是应用连接：此时还没有身份，
+ * 而 app_rls 的 policy 依赖 `current_setting('app.user_id')`，读不到任何行。
  */
-export function authenticate(req, config) {
-  if (!config.requireAuth) {
-    return {
-      userId: 'dev-local',
-      name: '本地开发',
-      role: 'student',
-      visibleStudents: ['dev-local'],
-      dev: true,
-    };
+export async function resolveIdentity(headers, { secret, authPool, now = Date.now() }) {
+  const raw = headers?.authorization ?? headers?.Authorization ?? '';
+  const token = String(raw).startsWith('Bearer ') ? String(raw).slice(7).trim() : '';
+
+  if (token === '') {
+    throw unauthorized('需要提供会话 token（Authorization: Bearer …）');
   }
-  const header = req.headers?.authorization ?? '';
-  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  if (!token) throw new AppError(ERROR_CODES.UNAUTHORIZED, '缺少 Bearer 会话票据');
-  const payload = verifySession(token, config.sessionSecret);
-  return {
-    userId: payload.sub,
-    name: payload.name ?? '',
-    role: payload.role ?? '',
-    visibleStudents: payload.vs.filter((v) => typeof v === 'string' && v !== ''),
-    dev: false,
-  };
+
+  const { subject, role, sessionId } = verifySessionToken(token, {
+    secret,
+    now,
+    requireRole: true,
+    requireSession: true,
+  });
+
+  await withAuthConnection(authPool, (client) => assertSessionActive(client, sessionId, { now }));
+
+  return { userId: subject, role, sessionId };
 }
 
 /**
- * 登录。认证查询走 DDL 里的 SECURITY DEFINER 函数：
- * 此时还没有身份，RLS 会 fail-closed，必须由函数以建表者身份查凭证。
- * 失败信息统一为「手机号或密码不正确」，不区分账号是否存在。
+ * 把一个筛选参数收敛进「我能看的集合」。
+ *
+ * 客户端可以传 `studentId` 做筛选（家长在两个孩子之间切换），
+ * 但服务端**不会因此相信它** —— 参数只是用来在可见集合里再挑一个。
+ * 结果不在集合里就明确报 403，而不是静默返回空列表：
+ * 前者是「你越权了」，后者会被当成「这孩子还没写作业」，把问题藏起来。
  */
-export async function login({ phone, password }, config) {
-  if (typeof phone !== 'string' || phone.trim() === '' ||
-      typeof password !== 'string' || password === '') {
-    throw new AppError(ERROR_CODES.INVALID_ARGUMENT, 'phone 与 password 均不能为空');
+export function narrowToVisible(visibleStudents, requested) {
+  if (requested === undefined || requested === null || requested === '') {
+    return { students: visibleStudents, requested: undefined };
   }
-  const pool = await getPool();
-  const { rows } = await pool.query('SELECT * FROM auth_lookup_credential($1)', [phone.trim()]);
-  const row = rows[0];
-  const denied = new AppError(ERROR_CODES.UNAUTHORIZED, '手机号或密码不正确');
-  if (!row || !verifyPassword(password, row.out_password_hash)) throw denied;
+  const one = String(requested);
+  if (!visibleStudents.includes(one)) {
+    return { students: [], requested: one, denied: true };
+  }
+  return { students: [one], requested: one };
+}
 
-  const userId = row.out_user_id;
-  const { rows: vsRows } = await pool.query('SELECT auth_visible_students($1) AS ids', [userId]);
-  const visibleStudents = (vsRows[0]?.ids ?? []).filter(Boolean);
-
-  const ttlHours = config.sessionTtlHours;
-  const expiresAt = new Date(Date.now() + ttlHours * 3600 * 1000);
-  const token = signSession(
-    { userId, name: row.out_name, role: row.out_role, visibleStudents, ttlHours },
-    config.sessionSecret
-  );
-
-  // 留痕：一次登录一行。user_session 的 RLS 只允许写 user_id = 自己的行。
-  await withTenant({ userId, visibleStudents }, async (client) => {
-    await client.query(
-      `INSERT INTO user_session (id, user_id, expires_at, client)
-       VALUES ($1, $2, $3, $4)`,
-      [crypto.randomUUID(), userId, expiresAt, 'login']
-    );
-  });
-
-  return {
-    token,
-    expiresAt: expiresAt.toISOString(),
-    user: { id: userId, name: row.out_name, role: row.out_role },
-    visibleStudents,
-  };
+/**
+ * 写操作的归属校验：这条数据到底能记到谁头上。
+ *
+ * **这是最容易写错的一处**：客户端会兴高采烈地传 `studentId`，
+ * 而服务端如果直接拿它入库，就等于「谁都能给别人的孩子写作业、记积分」。
+ * 所以 rules 是：**写入的 studentId 必须落在调用者自己的可见集合里**，
+ * 不在就 403，连「静默改写成一个合法值」都不做 —— 那样会把越权请求
+ * 伪装成一次成功操作，问题要等到对账时才发现。
+ */
+export function requireVisibleStudent(visibleStudents, requested, what = '该学生') {
+  const one = String(requested ?? '').trim();
+  if (one === '') throw badRequest('缺少 studentId');
+  if (!visibleStudents.includes(one)) throw forbidden(`无权访问${what}的数据`);
+  return one;
 }

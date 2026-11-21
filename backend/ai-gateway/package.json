@@ -1,14 +1,14 @@
 {
-  "name": "@easy-learn/ai-gateway",
+  "name": "easy-learn-ai-gateway",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "AI 网关：模型凭证只存在于此进程，客户端永不接触厂商 Key",
+  "description": "伴学 APP 的 AI 网关：客户端只与它通信，火山方舟的 API Key 只存在于它的环境变量里",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "dev": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "dev": "node src/dev-server.js"
   }
 }

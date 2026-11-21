@@ -1,26 +1,27 @@
-# Flutter 前端忽略规则
+# Flutter 前端忽略规则（根 .gitignore 已覆盖的这里不重复）
 
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 build/
+coverage/
 .idea/
 .vscode/
-*.log
 
-# 构建产物
-*.apk
-*.aab
-*.ipa
-*.dmg
-*.exe
-
-# 本地配置（前端只接受 --dart-define，不读 .env）
-.env
-local.properties
+# 平台工程的本机配置与产物
 key.properties
-*.jks
-*.keystore
+local.properties
+*.iml
+**/ephemeral/
+**/.gradle/
+**/.kotlin/
+**/Pods/
+**/DerivedData/
+**/.symlinks/
+android/app/debug/
+android/app/profile/
+android/app/release/
 
-# 注意：应用要提交 pubspec.lock，这里**不**忽略它。
+# 注意：pubspec.lock 必须提交，这里**不**忽略。
+# 注意：assets/fonts/ 是运行时必需字体（NotoSansSC），不能当构建产物忽略。

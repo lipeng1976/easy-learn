@@ -3,9 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "两个服务共用的无状态模块：配置、相对路径、错误码、HTTP 工具、连接池",
+  "description": "ai-gateway 与 data-service 共用的错误码、会话 token 契约。刻意不复制粘贴：错误码一旦分叉，症状是「同一个失败在两个服务里叫两个名字」，这是最难查的一类 bug。",
   "engines": {
     "node": ">=20"
-  },
-  "main": "./config.js"
+  }
 }

@@ -4,7 +4,7 @@
 #       .env.example 是唯一允许提交的 env 文件。
 # ─────────────────────────────────────────────────────────────
 
-# 密钥与本地配置
+# 密钥与本机配置
 .env
 .env.*
 !.env.example
@@ -17,6 +17,8 @@ key.properties
 local.properties
 secrets/
 credentials/
+s.yaml
+serverless*.yaml
 
 # 运行期数据（附件根目录、本地数据库、导出物）
 var/
@@ -29,8 +31,10 @@ var/
 out/
 logs/
 *.log
+tmp_*.log
+nul
 
-# 构建产物
+# 构建产物与二进制交付物
 build/
 dist/
 *.apk
@@ -39,6 +43,9 @@ dist/
 *.dmg
 *.exe
 *.msix
+*.zip
+site/
+site-old-*/
 
 # 依赖
 node_modules/
@@ -47,6 +54,17 @@ node_modules/
 .flutter-plugins-dependencies
 .pub-cache/
 
+# Flutter 平台临时/构建目录（★ 体积大头，325MB 曾差点入库）
+**/ephemeral/
+**/.gradle/
+**/.kotlin/
+**/Pods/
+**/DerivedData/
+**/.symlinks/
+*.iml
+*.ipr
+*.iws
+
 # 编辑器 / 系统
 .idea/
 .vscode/
@@ -54,3 +72,4 @@ node_modules/
 Thumbs.db
 *.swp
 *~
+.workbuddy-tmp/

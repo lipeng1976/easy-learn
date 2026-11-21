@@ -1,9 +1,9 @@
 {
-  "name": "easy-learn-handover",
+  "name": "easy-learn",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "伴学 APP 工程交接基线：Flutter 前端 + Node 双服务后端 + PostgreSQL DDL/种子",
+  "description": "伴学 APP 全量工程：Flutter 前端 + Node 双服务后端 + PostgreSQL 增量迁移",
   "engines": {
     "node": ">=20"
   },
@@ -13,11 +13,12 @@
     "backend/ai-gateway"
   ],
   "scripts": {
-    "db:init": "node scripts/init-db.mjs",
-    "check:env": "node scripts/check-env.mjs",
     "verify": "node scripts/verify.mjs",
-    "dev:data": "node backend/data-service/src/server.js",
-    "dev:ai": "node backend/ai-gateway/src/server.js",
-    "test": "node scripts/verify.mjs"
+    "test": "node scripts/verify.mjs",
+    "dev:data": "node backend/data-service/src/dev-server.js",
+    "dev:ai": "node backend/ai-gateway/src/dev-server.js",
+    "dev:stack": "node backend/data-service/scripts/dev-stack.mjs",
+    "db:migrate": "node backend/data-service/scripts/migrate.mjs",
+    "check:config": "node backend/data-service/scripts/check-config.mjs"
   }
 }

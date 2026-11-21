@@ -1,18 +1,50 @@
 {
-  "name": "@easy-learn/data-service",
+  "name": "easy-learn-data-service",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "数据服务：账号、关系、作业、复习、打卡、积分、附件",
+  "description": "伴学 APP 的数据服务：账号、关系、作业、复习、积分等全部落到 PostgreSQL。与 ai-gateway 共用 serverless/shared 的错误码与 token 模块。",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "dev": "node src/server.js",
+    "test": "node scripts/check-sql-templates.mjs && node scripts/quota-positions.mjs --quiet && node scripts/run-tests.mjs",
+    "check:sql-templates": "node scripts/check-sql-templates.mjs",
+    "test:remote": "node --test --test-concurrency=1 test/contract.test.js test/auth.test.js test/data.test.js",
+    "smoke:http": "node scripts/smoke-http.mjs",
+    "reconcile:server": "node scripts/reconcile/server-run.mjs",
+    "reconcile:compare": "node scripts/reconcile/compare.mjs",
+    "dev": "node src/dev-server.js",
+    "dev:stack": "node scripts/dev-stack.mjs",
+    "check:config": "node scripts/check-config.mjs",
+    "quota:where": "node scripts/quota-positions.mjs",
     "migrate": "node scripts/migrate.mjs",
-    "test": "node --test"
+    "deploy:prepare": "node ../deploy-prepare.mjs",
+    "deploy:zip": "node ../deploy-prepare.mjs --zip",
+    "seed:demo": "node scripts/seed-demo.mjs",
+    "accounts": "node scripts/list-accounts.mjs",
+    "report:storage": "node scripts/report-storage.mjs",
+    "walkthrough:cloud": "node scripts/dev-stack.mjs --run \"node tools/walkthrough-cloud.mjs\"",
+    "probe:oss": "node scripts/probe-oss.mjs",
+    "probe:photo-e2e": "node scripts/probe-photo-e2e.mjs",
+    "probe:media-e2e": "node scripts/probe-media-e2e.mjs",
+    "probe:media-bytes": "node scripts/probe-media-bytes.mjs",
+    "probe:image-access": "node scripts/probe-image-access.mjs",
+    "probe:chat": "node scripts/probe-chat.mjs",
+    "probe:checkin-e2e": "node scripts/probe-checkin-e2e.mjs",
+    "probe:reading-e2e": "node scripts/probe-reading-e2e.mjs",
+    "probe:word-e2e": "node scripts/probe-word-e2e.mjs",
+    "probe:word-ima": "node scripts/probe-word-ima.mjs",
+    "probe:ima-connect": "node scripts/probe-ima-connect.mjs",
+    "probe:ima-push": "node scripts/probe-ima-push.mjs",
+    "probe:ima-coparent": "node scripts/probe-ima-coparent.mjs",
+    "build-mode": "node ../../tools/build-mode.mjs"
   },
   "dependencies": {
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "embedded-postgres": "^17.10.0-beta.17"
   }
 }

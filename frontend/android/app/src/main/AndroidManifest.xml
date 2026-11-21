@@ -1,0 +1,68 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 必须写在 main 变体里。
+         Flutter 模板只把它放进 src/debug 与 src/profile（那是给 hot reload 用的），
+         所以 release 包一条联网权限都没有 —— 而症状不会说「缺权限」，
+         只会表现成「AI 全部离线」，很容易被误判成网关或 Key 的问题。
+         相机/相册不需要任何权限声明：image_picker 走系统的
+         ACTION_IMAGE_CAPTURE 与 Photo Picker，Android 侧零配置。
+         反过来说，如果哪天为了别的功能声明了 CAMERA 权限，
+         上面这条路径就会开始走权限检查 —— 那时必须同时做运行时申请。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- android:networkSecurityConfig：**只对回环地址放行明文 HTTP**。
+         它是 just_audio 的硬要求 —— 音频用 StreamAudioSource 播，而它在非 Web
+         平台上无条件经本地 127.0.0.1 的 HTTP 代理转发给 ExoPlayer；targetSdk>=28
+         时明文默认被禁，缺这一条音频就 `setAudioSource` 失败（照片、视频不受影响，
+         因为它们分别走 Image.memory 与 file://）。详见
+         res/xml/network_security_config.xml 顶部的长注释与 just_audio README.md:249。
+         ⚠️ 刻意不写 `android:usesCleartextTraffic="true"`：那会放开**所有** http://
+         域名，而我们的数据服务是 https，为一个回环地址全局降级不划算。 -->
+    <application
+        android:label="伴学·本机"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:networkSecurityConfig="@xml/network_security_config">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <!-- Specifies an Android theme to apply to this Activity as soon as
+                 the Android process has started. This theme is visible to the user
+                 while the Flutter UI initializes. After that, this theme continues
+                 to determine the Window background behind the Flutter UI. -->
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <!-- Don't delete the meta-data below.
+             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+    <!-- Required to query activities that can process text, see:
+         https://developer.android.com/training/package-visibility and
+         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
+
+         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Android 11+ 的包可见性：不声明这一条，TextToSpeech 可能绑不上引擎。
+             失败表现是「没有可用的朗读引擎」，不是崩溃 —— 又是一次静音失败。 -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE"/>
+        </intent>
+    </queries>
+</manifest>

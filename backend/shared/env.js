@@ -1,0 +1,33 @@
+/**
+ * 两个服务**共用**的环境判定。
+ *
+ * ## 为什么它必须在 shared 里，而不是各写一份
+ *
+ * 「现在是生产环境吗」这一个语义，如果在数据服务与网关各写一份，
+ * 迟早会在某次修改里分叉（比如一边加了 `trim()`、另一边没有）。
+ * 而判错方向的代价是**单侧**的：生产环境被当成开发环境，
+ * 于是「该拦的一条都没拦」—— 这正是本项目最怕的那类失败（不报错、只放行）。
+ *
+ * 与 `errors.js` / `token.js` 同一个理由：一个语义只许一个词，词只许一处定义。
+ */
+
+/**
+ * 开发栈用的那把**公开**密钥（见 `data-service/scripts/dev-stack.mjs`）。
+ *
+ * 它写在仓库里，所以任何人拿到这一串都能自己签一张有效的会话票，
+ * 而**票据校验会全部通过、不留任何痕迹**。出现在生产 = 裸奔。
+ */
+export const DEV_STACK_SECRET = 'dev-stack-secret-not-for-production';
+
+/** 会话密钥的最小长度（HMAC 的强度等于密钥的熵）。 */
+export const MIN_SECRET_LENGTH = 32;
+
+/**
+ * 生产判定。
+ *
+ * 大小写与两侧空格都容忍：这个值来自平台控制台的「环境变量」输入框，
+ * 从那里粘出来带空格是常事，而判错方向的代价是「生产按开发标准放行」。
+ */
+export function isProduction(env = process.env) {
+  return String(env.NODE_ENV ?? '').trim().toLowerCase() === 'production';
+}

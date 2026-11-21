@@ -3,18 +3,23 @@
 node_modules/
 dist/
 coverage/
+out/
 
 # 运行期附件根目录（数据库只存相对它的路径）
-# ⚠️ 必须锚定到 backend 根：写成任意层级的 storage/ 会连
-#    data-service/src/storage/ 这个**源码目录**一起忽略，文件在磁盘上、
-#    自检会报「齐全」，但 git 入库时会静默漏掉 local_driver.js。
 /var/
 /storage/
+
+# ⚠️ 锚定到 backend 根：写成任意层级的 storage/ 会连
+#    data-service/src/storage/ 这类源码目录一起忽略，文件在磁盘上却漏入库。
+#    判据：scripts/verify.mjs 的 git check-ignore 检查。
 
 # 本地数据库与日志
 .pgdata*/
 *.log
-out/
+.run3.txt
+.smoke.txt
+.testout.txt
+dstest*.log
 
 # 云函数打包临时产物
 *.zip

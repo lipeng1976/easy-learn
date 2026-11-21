@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────
+# 根 .gitignore —— 全仓通用
+# 原则：密钥、运行期数据、构建产物一律不进版本库。
+#       .env.example 是唯一允许提交的 env 文件。
+# ─────────────────────────────────────────────────────────────
+
+# 密钥与本地配置
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+key.properties
+local.properties
+secrets/
+credentials/
+
+# 运行期数据（附件根目录、本地数据库、导出物）
+var/
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.sql.gz
+.pgdata*/
+out/
+logs/
+*.log
+
+# 构建产物
+build/
+dist/
+*.apk
+*.aab
+*.ipa
+*.dmg
+*.exe
+*.msix
+
+# 依赖
+node_modules/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*~

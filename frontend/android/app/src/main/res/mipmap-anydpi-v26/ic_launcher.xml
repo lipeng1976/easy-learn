@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 8.0（API 26）起的自适应图标。
+
+  背景**刻意用纯色而不是图片**：启动器做视差/缩放时会看到背景层的边缘，
+  用图（尤其是带渐变的图）在放大时容易露出接缝；纯色永远安全。
+  前景图的画布是 108dp，内容只占中间 44%，剩下的留白是给启动器裁切用的 ——
+  这不是浪费，裁掉就没有留白了，图标边上会被啃掉一块。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

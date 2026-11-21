@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图标相关颜色。由 tools/make-app-icon.mjs 生成，改配色请改那个脚本并重跑。 -->
+<resources>
+    <!-- 自适应图标背景层。与 lib/constants/app_colors.dart 的 primary 一致。 -->
+    <color name="ic_launcher_background">#0E9468</color>
+</resources>

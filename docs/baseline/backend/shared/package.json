@@ -1,0 +1,11 @@
+{
+  "name": "@easy-learn/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "两个服务共用的无状态模块：配置、相对路径、错误码、HTTP 工具、连接池",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./config.js"
+}

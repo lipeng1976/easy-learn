@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  只对**本机回环地址**开放明文 HTTP，其余一律不放行。
+
+  ## 为什么必须有这一条
+
+  `just_audio` 的 `StreamAudioSource`（我们用它把内存里的音频字节直接播出来）
+  在非 Web 平台上**无条件**经它自己的本地 HTTP 代理转发 —— 见包源码
+  `just_audio.dart:3310-3316`：
+
+      if (kIsWeb) { ……data URL…… }
+      else {
+        await _player!._proxy.ensureRunning();
+        _uri = _player!._proxy.addStreamAudioSource(this);
+      }
+
+  而 `_ProxyHttpServer` 绑的是回环地址、给出的 URI 也是 http：
+
+      HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      Uri.http('${InternetAddress.loopbackIPv4.address}:$port', '/id/${source._id}')
+
+  也就是说 ExoPlayer 必须向 `http://127.0.0.1:<port>/id/0` 发一次**明文**请求。
+
+  而从 targetSdk 28 起安卓**默认禁止明文流量**，本工程 `targetSdk = 36`。
+  缺这一条的后果不是「音质差」或「只是慢」，而是 `setAudioSource` 直接失败：
+  表现为「照片、视频都好好的，**只有音频播不出来**」—— 因为照片走
+  `Image.memory`、视频走 `file://`，两者都不经这个代理。
+
+  ## 为什么不用 `android:usesCleartextTraffic="true"`
+
+  那是 `just_audio` README 给的**另一种**写法，但它是对所有 `http://` 域名
+  放行。我们的数据服务是 https，为一个回环地址把全局降级不划算。
+  这里按 README 同段的「network security config」写法，把范围收到两条回环地址。
+
+  ## 出处
+
+  `just_audio` README.md:249 明文要求：
+  「just_audio's proxy (used to implement features such as headers, caching and
+    stream audio sources) runs on a localhost HTTP server, and this also requires
+    cleartext access to be enabled.」
+  官方 example 的清单里也带着 `android:usesCleartextTraffic="true"`。
+  这不是我们猜的，是包自己的要求。
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- 代理实际绑的就是它（`InternetAddress.loopbackIPv4`）。 -->
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <!-- 同义写法，某些解析路径会把它判成主机名而不是字面量。 -->
+        <domain includeSubdomains="false">localhost</domain>
+            <!-- 本机后台（构建工具自动插入，构建后还原） -->
+        <domain includeSubdomains="false">8.138.227.136</domain>
+    </domain-config>
+</network-security-config>

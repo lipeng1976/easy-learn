@@ -1,0 +1,35 @@
+{
+    "name": "伴学",
+    "short_name": "伴学",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#4D7CFE",
+    "theme_color": "#4D7CFE",
+    "description": "伴学：把学生的作业、错题复习、学习计划、积分与家长沟通放在一处。",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

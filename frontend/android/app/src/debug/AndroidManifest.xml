@@ -1,0 +1,15 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The INTERNET permission is required for development. Specifically,
+         the Flutter tool needs it to communicate with the running application
+         to allow setting breakpoints, to provide hot reload, etc.
+    -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- 只给 debug 变体开明文 HTTP。
+         Android 9（API 28）起系统默认禁止明文，**localhost / 127.0.0.1 也不例外**。
+         所以要连本机的 `http://192.168.x.x:8788`，不开这条就是连不上，
+         而症状**不是**「缺权限」——所有请求静静失败，看着像服务端没起来。
+         这条**绝不能搬进 main 变体**：release 包必须走 HTTPS，
+         否则用户数据摊在明文上，应用商店也会因此拒审。 -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

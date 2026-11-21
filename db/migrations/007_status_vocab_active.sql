@@ -1,0 +1,24 @@
+-- 状态词统一：结伴关系与学习计划的 `accepted` → `active`
+--
+-- 起因见 `src/vocab.js` 的文件头：同一个语义在两处用了两个词
+-- （服务端 `accepted` / 客户端 `active`），一直靠客户端仓库层做双向翻译活着。
+-- 这类不一致会持续产生 bug —— 客户端漏映射一个词的后果是
+-- 「家长端永远显示尚未与任何学生结伴」，**不报任何错**，
+-- 而且 `/data/homework` 那条路是好的，两个功能各说各话。
+--
+-- 为什么改**服务端**这一侧：
+--   客户端那份词已经落进**每台已装设备的 SQLite**
+--   （`local_database_service.dart` 直接写 `RelationshipStatus.active.name`），
+--   改它要动客户端的 DB 迁移；而服务端这边只有演示数据，可重建。
+--   统一之后的词与客户端枚举名、与本地库里的值**逐字相同**，
+--   所以 `.name` 直接上行也成为合法值（客户端那层翻译保留只为处理
+--   服务端独有的 `expired` 与客户端独有的 `withdrawn`，见 `vocab.js`）。
+--
+-- 幂等：`where status = 'accepted'` 匹配不到就是更新 0 行，重跑无副作用。
+-- 全新库（001 建表）里本来就没有 `accepted` 的数据，这段是空操作。
+--
+-- ⚠️ 与 `src/vocab.js` 是**同一件事的两半**：本文件改数据，那边改代码。
+--    只上一半的后果很具体 —— 库里是 `active`、代码查 `accepted`（或反过来），
+--    两边都"成功"执行、都返回 0 行，表现为家长看不到孩子。
+UPDATE relationship SET status = 'active' WHERE status = 'accepted';
+UPDATE study_plan   SET status = 'active' WHERE status = 'accepted';

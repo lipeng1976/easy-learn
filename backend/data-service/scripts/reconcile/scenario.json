@@ -1,0 +1,564 @@
+{
+  "scenario": "review-loop",
+  "note": "结伴 → 作业闭环 → 复习闭环 → 打卡/积分/心愿闭环 → 运动 → 点评：家长邀请结伴 → 学生接受 → 建作业 → 提交 → 传照片 → 写错题 → 组卷 → 导出 → 作答 → 批改 → 毕业 → 报告 → 建计划 → 打卡 → 记分 → 撤销 → 许愿 → 定价 → 申请 → 兑现 → 扣分 → 建运动计划 → 启用 → 记运动记录（同一 id 重试一次）→ 家长点评。两侧各有一个薄执行器读这份文件，序列本身只有这一份。⚠️ 结伴关系**不再是两侧种子的起点，改由本序列的头两步产生** —— 它是可见集合（家长能看见哪个孩子）的来源，摆在起点就等于「只被间接验证」：状态词写错时表现为后面某一步 403，而错误本身在 dump 里看不见。",
+  "actor": {
+    "student": "stu_001",
+    "studentName": "林小宇",
+    "parent": "par_001"
+  },
+  "dump": [
+    "homework",
+    "homework_image",
+    "review_mistake",
+    "review_paper",
+    "review_paper_item",
+    "review_attempt",
+    "review_summary",
+    "workout_plan",
+    "workout_record",
+    "daily_comment",
+    "study_plan",
+    "study_plan_checkin",
+    "point_ledger",
+    "wish",
+    "relationship",
+    "app_notification"
+  ],
+  "dumpServerOnly": [
+    "app_notification_read"
+  ],
+  "behaviorDiff": {
+    "note": "两侧**故意不同**的行为，逐条钉在这里。比对器不会因为它们而失败，但会**断言实际与声明一致** —— 声明过时（清单对不上、数量变了）会立刻报出来。写在这里的东西必须给出理由，没有理由的条目等于没修。",
+    "entries": [
+      {
+        "table": "app_notification",
+        "mode": "title-multiset",
+        "server": [
+          "孩子已提交作业",
+          "复习批改完成",
+          "复习结果",
+          "学习计划打卡",
+          "孩子想兑换心愿",
+          "心愿已兑现",
+          "家长点评"
+        ],
+        "local": [],
+        "reason": "陷阱⑦：通知的产生位置整体从客户端搬到服务端（`routes/notify.js` 的文件头）。本地实现是「哪台设备显示就由哪台设备生成」，单机演示成立、两台手机就不成立 —— 学生手机写进本机库的那条通知，在家长手机上根本不存在。所以序列里的每一步在服务端都会额外产生通知，而本地一条都不产生，**这不是回归，是这次迁移要做的事本身**。逐条：①提交作业→家长；②③复习批改完成→家长+学生；④打卡→家长；⑤学生申请兑现→家长；⑥家长兑现→学生；⑦家长点评→学生（本地是 `parent_controller.dart` 的「写点评 + 发通知」两件事，服务端合成在 `insertDailyComment` 一个事务里）。"
+      },
+      {
+        "table": "app_notification_read",
+        "mode": "server-only-table",
+        "expectRows": 1,
+        "reason": "第 23 张表，本地 SQLite 里**没有**。本地的已读状态是 `app_notification.isRead` 上的一个布尔值 —— 它记不下「谁读的」，所以广播通知（`targetUserId = ''`）被学生点掉之后，家长那端的未读数会一起消失。服务端改成关联表 `(notification_id, user_id)`，行上的 `is_read` 退化成历史字段（写不由客户端写、读不由客户端读，见 `sql/005_notification.sql`）。⚠️ **因此「通知已读」这一步在两侧不可比**：本地模型缺「读者」这个维度，不是数据不同、是表达能力不同。序列里这一步只在一侧执行（`sides: [\"server\"]`）。S4 客户端读路径要跟着改。"
+      }
+    ]
+  },
+  "vocabDiff": [
+    {
+      "column": "study_plan.status",
+      "local": ["pendingStudentConfirm", "active", "rejected", "withdrawn", "completed"],
+      "server": ["pending", "active", "rejected", "completed", "expired"],
+      "note": "⚠️ 这一栏**仍未统一，而且剩下的差异不是命名风格**。`active` 两侧已同词（2026-09-20 服务端由 `accepted` 改来，见 `src/vocab.js` 与 `sql/007_status_vocab_active.sql`）；改动前这里连 `accepted` 也是两套词。剩下三处：① 服务端 `pending`（待确认）↔ 客户端 `pendingStudentConfirm` —— 同一个语义两个词，合并要动客户端的落库值（`StudyPlanStatus.name` 直接进本地 SQLite），暂由 `http_study_plan_repository.dart` 翻译；② 服务端 `expired`（到期自动失效）与客户端 `withdrawn`（家长撤回）在对面**都没有对应值** —— 它们是两个不同的动作，凑成一个词会把「谁把它结束的」丢掉，所以不凑；③ 因此客户端仍然**不能**直接上行 `.name`：`pendingStudentConfirm` / `withdrawn` 会被服务端白名单 400 拒掉，翻译层是当前就该存在的东西，不是权宜之计。本场景里的计划只用 `completed`（少数几个两侧同词的值之一）—— 不是偷懒，是不给「词表不一致」制造第二个失败面；词表本身另有两侧的单测盯着。"
+    }
+  ],
+  "steps": [
+    {
+      "step": "家长发出结伴邀请（状态 pending）—— ⚠️ 关系不再当起点，改由这一步产生",
+      "repo": "relationship",
+      "method": "invite",
+      "identity": "parent",
+      "as": "rel1",
+      "args": {
+        "senderId": "$parent",
+        "targetPhone": "13800000001"
+      }
+    },
+    {
+      "step": "学生接受邀请（pending → active）—— 这一步之后家长才「看得见」这个孩子",
+      "repo": "relationship",
+      "method": "updateStatus",
+      "identity": "student",
+      "args": {
+        "id": "$rel1",
+        "status": "active"
+      }
+    },
+    {
+      "step": "建作业",
+      "repo": "homework",
+      "method": "insertHomework",
+      "as": "hw1",
+      "args": {
+        "title": "对账·数学作业",
+        "subject": "数学",
+        "imageUrl": "",
+        "dueAt": "2026-09-18T12:00:00.000Z",
+        "estimatedMinutes": 20,
+        "status": "pending",
+        "wrongCount": 0,
+        "aiEnabled": 1,
+        "needsGrading": 1,
+        "studentId": "$student"
+      }
+    },
+    {
+      "step": "提交（字段掩码，与 HomeworkPatch.toMap() 逐字对应）",
+      "repo": "homework",
+      "method": "updateHomework",
+      "args": {
+        "id": "$hw1",
+        "mask": {
+          "status": "finished",
+          "submittedAt": "2026-09-18T12:30:00.000Z",
+          "submitBatchId": "batch_rec_1",
+          "imageCount": 2,
+          "imageUrl": "storage/rec-1.jpg",
+          "needsGrading": 0
+        }
+      }
+    },
+    {
+      "step": "传照片（两步一张，顺序即 sortOrder）",
+      "repo": "homework",
+      "method": "saveHomeworkImages",
+      "as": "img1",
+      "args": {
+        "studentId": "$student",
+        "images": [
+          {
+            "homeworkId": "$hw1",
+            "storageKey": "storage/rec-1.jpg",
+            "fileName": "rec-1.jpg",
+            "fileSize": 8,
+            "mimeType": "image/jpeg",
+            "ocrStatus": "none",
+            "ocrText": "",
+            "batchId": "batch_rec_1",
+            "sortOrder": 0
+          },
+          {
+            "homeworkId": "$hw1",
+            "storageKey": "storage/rec-2.jpg",
+            "fileName": "rec-2.jpg",
+            "fileSize": 9,
+            "mimeType": "image/jpeg",
+            "ocrStatus": "none",
+            "ocrText": "",
+            "batchId": "batch_rec_1",
+            "sortOrder": 1
+          }
+        ]
+      }
+    },
+    {
+      "step": "写错题",
+      "repo": "review",
+      "method": "insertReviewMistakes",
+      "as": "mis1",
+      "args": {
+        "studentId": "$student",
+        "items": [
+          {
+            "subject": "数学",
+            "title": "分数计算",
+            "originalAnswer": "3/4",
+            "wrongReason": "分母处理错误",
+            "createdAt": "2026-09-18T12:31:00.000Z",
+            "state": "pending",
+            "studentId": "$student",
+            "homeworkId": "$hw1",
+            "knowledgePoint": "分数",
+            "wrongCount": 1,
+            "sourceHomeworkTitle": "对账·数学作业"
+          }
+        ]
+      }
+    },
+    {
+      "step": "组卷（卷 + 题目一次原子写入）",
+      "repo": "review",
+      "method": "insertReviewPaperWithItems",
+      "as": "paper1",
+      "args": {
+        "studentId": "$student",
+        "paper": {
+          "title": "对账·数学复习卷",
+          "subject": "数学",
+          "knowledgePoints": "分数",
+          "status": "draft",
+          "itemCount": 1,
+          "passCount": 0,
+          "failCount": 0,
+          "filePath": "",
+          "note": ""
+        },
+        "items": [
+          {
+            "mistakeId": "$mis1_0",
+            "subject": "数学",
+            "knowledgePoint": "分数",
+            "questionTitle": "分数计算",
+            "questionBody": "1/2 + 1/4 = ?",
+            "originalAnswer": "3/4",
+            "wrongReason": "分母处理错误",
+            "answerKey": "3/4",
+            "sortOrder": 0,
+            "studentAnswer": "",
+            "result": "pending",
+            "photoPath": "",
+            "comment": ""
+          }
+        ]
+      }
+    },
+    {
+      "step": "导出（掩码更新；这一步没写的字段必须原样保持）",
+      "repo": "review",
+      "method": "updateReviewPaper",
+      "args": {
+        "id": "$paper1",
+        "mask": {
+          "status": "printed",
+          "exportedAt": "2026-09-18T12:40:00.000Z"
+        }
+      }
+    },
+    {
+      "step": "作答回传（毕业判定的唯一依据）",
+      "repo": "review",
+      "method": "insertReviewAttempts",
+      "as": "att1",
+      "args": {
+        "studentId": "$student",
+        "items": [
+          {
+            "mistakeId": "$mis1_0",
+            "paperId": "$paper1",
+            "itemId": "$paper1_0",
+            "channel": "paper",
+            "round": 1,
+            "answer": "3/4",
+            "correct": 1,
+            "score": 10,
+            "comment": ""
+          }
+        ]
+      }
+    },
+    {
+      "step": "批改完成（掩码更新；服务端在这一步生成复习通知，本地生成不了）",
+      "repo": "review",
+      "method": "updateReviewPaper",
+      "args": {
+        "id": "$paper1",
+        "mask": {
+          "status": "graded",
+          "passCount": 1,
+          "failCount": 0,
+          "gradedAt": "2026-09-18T13:00:00.000Z"
+        }
+      }
+    },
+    {
+      "step": "错题毕业（状态流转到 mastered）",
+      "repo": "review",
+      "method": "updateReviewMistakeState",
+      "args": {
+        "id": "$mis1_0",
+        "state": "mastered",
+        "wrongCount": 1,
+        "reviewRound": 1,
+        "lastReviewedAt": "2026-09-18T13:00:00.000Z",
+        "masteredAt": "2026-09-18T13:00:00.000Z",
+        "masteredBySelf": 0
+      }
+    },
+    {
+      "step": "周期报告（第一次）",
+      "repo": "review",
+      "method": "insertReviewSummary",
+      "as": "sum1",
+      "args": {
+        "studentId": "$student",
+        "scope": "week",
+        "scopeKey": "2026-W38",
+        "totalCount": 1,
+        "passCount": 1,
+        "masteredCount": 1,
+        "remainCount": 0,
+        "passRate": 1.0,
+        "weakPoints": "分数",
+        "body": "本周 1 道错题，通过 1 道。",
+        "generatedAt": "2026-09-18T13:10:00.000Z"
+      }
+    },
+    {
+      "step": "周期报告（同一周期重复生成 —— 两侧都必须只留一份）",
+      "repo": "review",
+      "method": "insertReviewSummary",
+      "as": "sum1",
+      "args": {
+        "studentId": "$student",
+        "scope": "week",
+        "scopeKey": "2026-W38",
+        "totalCount": 2,
+        "passCount": 1,
+        "masteredCount": 1,
+        "remainCount": 1,
+        "passRate": 0.5,
+        "weakPoints": "分数,小数",
+        "body": "本周 2 道错题，通过 1 道。",
+        "generatedAt": "2026-09-18T13:20:00.000Z"
+      }
+    },
+    {
+      "step": "建学习计划（学生自建 —— 服务端只在家长发起时才发通知，所以这一步两侧都不产生通知）",
+      "repo": "studyPlan",
+      "method": "insertStudyPlan",
+      "as": "plan1",
+      "args": {
+        "title": "对账·每日朗读",
+        "content": "朗读课文 10 分钟",
+        "startAt": "2026-09-18T00:00:00.000Z",
+        "endAt": "2026-09-24T00:00:00.000Z",
+        "type": "daily",
+        "status": "completed",
+        "cycleType": "daily",
+        "customWeekdays": "一,三,五",
+        "rejectReason": "",
+        "studentId": "$student"
+      }
+    },
+    {
+      "step": "打卡（幂等：同计划同一天只留一行）",
+      "repo": "studyPlan",
+      "method": "insertStudyPlanCheckin",
+      "as": "chk1",
+      "args": {
+        "planId": "$plan1",
+        "studentId": "$student",
+        "date": "2026-09-18",
+        "createdAt": "2026-09-18T13:05:00.000Z"
+      }
+    },
+    {
+      "step": "再打一次同一天的卡 —— 两侧都必须只有一行（而且 id 不变）",
+      "repo": "studyPlan",
+      "method": "insertStudyPlanCheckin",
+      "as": "chk1",
+      "args": {
+        "planId": "$plan1",
+        "studentId": "$student",
+        "date": "2026-09-18",
+        "createdAt": "2026-09-18T13:05:30.000Z"
+      }
+    },
+    {
+      "step": "打卡记分（幂等键里含计划 id —— 序列里写成交错的别名，两侧各自解析成自己的真实 id）",
+      "repo": "points",
+      "method": "earnPoints",
+      "as": "pt1",
+      "args": {
+        "studentId": "$student",
+        "action": "planCheckin",
+        "points": 5,
+        "reason": "完成每日朗读",
+        "idempotencyKey": "plan:$plan1:2026-09-18",
+        "refType": "plan",
+        "refId": "$plan1"
+      }
+    },
+    {
+      "step": "同一个幂等键再记一次（网络超时后的重试）—— 两侧都必须回原结果、且只有一行",
+      "repo": "points",
+      "method": "earnPoints",
+      "as": "pt1",
+      "args": {
+        "studentId": "$student",
+        "action": "planCheckin",
+        "points": 5,
+        "reason": "完成每日朗读",
+        "idempotencyKey": "plan:$plan1:2026-09-18",
+        "refType": "plan",
+        "refId": "$plan1"
+      }
+    },
+    {
+      "step": "撤销打卡得分（按 studentId + 幂等键撤 —— 填两笔：标掉原记录 + 补一笔相反数）",
+      "repo": "points",
+      "method": "revokePoints",
+      "as": "pt1",
+      "args": {
+        "studentId": "$student",
+        "idempotencyKey": "plan:$plan1:2026-09-18",
+        "reason": ""
+      }
+    },
+    {
+      "step": "许愿（学生自己许的）",
+      "repo": "wish",
+      "method": "insertWish",
+      "as": "wish1",
+      "args": {
+        "studentId": "$student",
+        "title": "对账·周末去公园骑车",
+        "description": "连着两周都完成朗读就兑现",
+        "isPublic": 1,
+        "parentConfirmed": 1,
+        "studentConfirmed": 1,
+        "isArchived": 0,
+        "expectedDate": "2026-09-20T00:00:00.000Z",
+        "pointCost": 0
+      }
+    },
+    {
+      "step": "家长定价（30 分）",
+      "repo": "wish",
+      "method": "updateWishRedeemState",
+      "identity": "parent",
+      "args": {
+        "id": "$wish1",
+        "pointCost": 30
+      }
+    },
+    {
+      "step": "学生申请兑现（服务端在这一步给家长发通知；这时一分都不扣）",
+      "repo": "wish",
+      "method": "updateWishRedeemState",
+      "args": {
+        "id": "$wish1",
+        "redeemRequestedAt": "2026-09-18T13:30:00.000Z"
+      }
+    },
+    {
+      "step": "家长兑现（服务端在这一步给学生发通知）",
+      "repo": "wish",
+      "method": "updateWishRedeemState",
+      "identity": "parent",
+      "args": {
+        "id": "$wish1",
+        "redeemedAt": "2026-09-18T13:40:00.000Z"
+      }
+    },
+    {
+      "step": "兑现扣分（-30，同一个防重键 —— 兑现就该只扣一次）",
+      "repo": "points",
+      "method": "earnPoints",
+      "as": "pt2",
+      "args": {
+        "studentId": "$student",
+        "action": "wishRedeem",
+        "points": -30,
+        "reason": "兑现心愿：对账·周末去公园骑车",
+        "idempotencyKey": "wish_redeem:$wish1",
+        "refType": "wish",
+        "refId": "$wish1"
+      }
+    },
+    {
+      "step": "标记一条通知已读 —— ⚠️ 只在一侧执行：本地模型里没有「读者」这个维度（见 behaviorDiff）",
+      "repo": "notification",
+      "method": "markFirstRead",
+      "sides": ["server"],
+      "args": {
+        "pick": "first"
+      }
+    },
+    {
+      "step": "建运动计划 —— `id` 由**客户端**带：这是 R2（id 服务端生成）唯一一处刻意的例外，因为 id 就是幂等键",
+      "repo": "workout",
+      "method": "insertPlan",
+      "as": "wp1",
+      "args": {
+        "id": "wp_rec_1",
+        "title": "对账·每周跑步",
+        "project": "跑步",
+        "weekdays": "一,三,五",
+        "targetMinutes": 30,
+        "isActive": 0,
+        "startDate": "2026-09-14T00:00:00.000Z",
+        "endDate": "2026-12-31T00:00:00.000Z",
+        "startTime": "07:00",
+        "endTime": "07:40",
+        "cycleType": "weekly",
+        "customWeekdays": "",
+        "studentId": "$student"
+      }
+    },
+    {
+      "step": "同一个计划再建一次（网络超时后的重试，**字段还改了一个**）—— 两侧都必须只有一行、且留下的是原来那一行",
+      "repo": "workout",
+      "method": "insertPlan",
+      "as": "wp1",
+      "args": {
+        "id": "wp_rec_1",
+        "title": "对账·每周跑步",
+        "project": "跑步",
+        "weekdays": "一,三,五",
+        "targetMinutes": 99,
+        "isActive": 0,
+        "startDate": "2026-09-14T00:00:00.000Z",
+        "endDate": "2026-12-31T00:00:00.000Z",
+        "startTime": "07:00",
+        "endTime": "07:40",
+        "cycleType": "weekly",
+        "customWeekdays": "",
+        "studentId": "$student"
+      }
+    },
+    {
+      "step": "启用计划（传的是**目标值**而不是「切换」—— 重复调用结果相同）",
+      "repo": "workout",
+      "method": "setPlanActive",
+      "args": {
+        "id": "$wp1",
+        "isActive": 1
+      }
+    },
+    {
+      "step": "记一条运动记录（`id` 同样由客户端带）",
+      "repo": "workout",
+      "method": "insertRecord",
+      "as": "wr1",
+      "args": {
+        "id": "wr_rec_1",
+        "project": "跑步",
+        "startAt": "2026-09-21T01:00:00.000Z",
+        "endAt": "2026-09-21T01:35:00.000Z",
+        "minutes": 35,
+        "feedback": "今天状态不错，呼吸节奏稳定。",
+        "planId": "$wp1",
+        "studentId": "$student"
+      }
+    },
+    {
+      "step": "同一条记录再提交一次（重试）—— 两侧都必须只有一行（重复插会把「今天跑了几次」改坏）",
+      "repo": "workout",
+      "method": "insertRecord",
+      "as": "wr1",
+      "args": {
+        "id": "wr_rec_1",
+        "project": "跑步",
+        "startAt": "2026-09-21T01:00:00.000Z",
+        "endAt": "2026-09-21T01:35:00.000Z",
+        "minutes": 35,
+        "feedback": "今天状态不错，呼吸节奏稳定。",
+        "planId": "$wp1",
+        "studentId": "$student"
+      }
+    },
+    {
+      "step": "家长发一条每日点评（服务端在这一步同时生成通知；`createdAt` 由服务端说了算 —— R3）",
+      "repo": "comment",
+      "method": "insertDailyComment",
+      "identity": "parent",
+      "as": "dc1",
+      "args": {
+        "rating": "优秀",
+        "content": "今天主动完成了朗读，继续保持。",
+        "studentId": "$student",
+        "createdAt": "2026-09-21T02:00:00.000Z"
+      }
+    }
+  ]
+}
