@@ -54,13 +54,17 @@ let appPool;
 let authPool;
 let app;
 
-async function call(method, pathname, { token, query, body } = {}) {
+async function call(method, pathname, { token, query, body, headers, remoteAddress } = {}) {
   const res = await app({
     method,
     pathname,
     query: query ?? {},
-    headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
+    headers: {
+      ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+      ...(headers ?? {}),
+    },
     body: body ?? {},
+    remoteAddress,
   });
   return { status: res.status, json: JSON.parse(res.body) };
 }
@@ -693,4 +697,63 @@ test('安全边界：鉴权连接碰不到任何业务表', async () => {
     () => withAuthConnection(authPool, (c) => c.query('select 1 from relationship limit 1')),
     /permission denied/i,
   );
+});
+
+// ===== ⑤ 登录留痕（030）=====
+
+test('登录留痕：成功登录写账号/时间/IP/UA；失败登录不写', async () => {
+  const phone = '13800002007';
+  const before = await adminPool.query(
+    'select count(*)::int as n from login_log where account = $1', [phone],
+  );
+
+  const failed = await call('POST', '/auth/login', {
+    body: { phone, password: 'wrong123', role: 'student' },
+    headers: { 'x-forwarded-for': '203.0.113.7' },
+  });
+  assert.equal(failed.status, 401);
+  const afterFail = await adminPool.query(
+    'select count(*)::int as n from login_log where account = $1', [phone],
+  );
+  assert.equal(afterFail.rows[0].n, before.rows[0].n, '密码错误不该留登录成功记录');
+
+  const registered = await call('POST', '/auth/register', {
+    body: { phone, password: PASSWORD, role: 'student' },
+    headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.1', 'user-agent': '留痕测试UA' },
+  });
+  assert.equal(registered.status, 200, JSON.stringify(registered.json));
+
+  const logged = await call('POST', '/auth/login', {
+    body: { phone, password: PASSWORD, role: 'student' },
+    headers: { 'x-real-ip': '198.51.100.2' },
+    remoteAddress: '127.0.0.1',
+  });
+  assert.equal(logged.status, 200, JSON.stringify(logged.json));
+
+  const rows = await adminPool.query(
+    `select user_id, account, logged_at, ip, client, method
+       from login_log where account = $1 order by logged_at asc`, [phone],
+  );
+  assert.equal(rows.rowCount, 2, '注册自动登录 + 密码登录各留一行');
+  assert.equal(rows.rows[0].method, 'register');
+  assert.equal(rows.rows[0].ip, '203.0.113.9', '转发链只取第一段');
+  assert.equal(rows.rows[0].client, '留痕测试UA');
+  assert.equal(rows.rows[1].method, 'password');
+  assert.equal(rows.rows[1].ip, '198.51.100.2', '没有 XFF 时用 X-Real-IP');
+  assert.equal(rows.rows[1].account, phone);
+  assert.equal(rows.rows[1].user_id, registered.json.data.user.id);
+  assert.ok(rows.rows[1].logged_at instanceof Date, '登录时间必须是真时间戳');
+});
+
+test('登录留痕：没有任何转发头时用 socket 地址兜底', async () => {
+  const phone = '13800002008';
+  const res = await call('POST', '/auth/register', {
+    body: { phone, password: PASSWORD, role: 'student' },
+    remoteAddress: '10.20.30.40',
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.json));
+  const row = await adminPool.query(
+    'select ip from login_log where account = $1 order by logged_at desc limit 1', [phone],
+  );
+  assert.equal(row.rows[0]?.ip, '10.20.30.40');
 });

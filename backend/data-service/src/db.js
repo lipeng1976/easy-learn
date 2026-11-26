@@ -390,7 +390,7 @@ export async function resolveVisibleStudents(client, userId, role) {
  * 所以 `assertAuthRoleScoped()` 会在启动时逐张业务表断言 app_auth 无权限，
  * 让「顺手补一句 GRANT ALL TABLES」这件事当场变成启动失败。
  */
-export const AUTH_ROLE_TABLES = ['app_user', 'app_user_credential', 'user_session'];
+export const AUTH_ROLE_TABLES = ['app_user', 'app_user_credential', 'user_session', 'login_log'];
 
 /**
  * 借一条鉴权连接执行一段逻辑，**不开事务**。
@@ -498,6 +498,17 @@ export async function assertAuthRoleScoped(pool) {
   if (missing.length > 0) {
     throw new Error(
       `鉴权角色 ${role.u} 缺少这些表：${missing.join('、')} —— 注册与登录会全线失败。`,
+    );
+  }
+
+  // login_log 虽然进了白名单，但它带 BYPASSRLS：**只准 INSERT**。
+  // 一旦有人给 app_auth 补了 SELECT/UPDATE/DELETE，未登录的连接就能
+  // 读改所有账号的登录历史，而功能测试全绿、没有任何症状。
+  const logPriv = r.rows.find((x) => x.relname === 'login_log');
+  if (logPriv && (logPriv.can_select || logPriv.can_update || logPriv.can_delete)) {
+    throw new Error(
+      `鉴权角色 ${role.u} 对 login_log 多出了 SELECT/UPDATE/DELETE 权限 —— `
+        + '它带 BYPASSRLS，能读到所有人的登录历史。030 迁移只该 GRANT INSERT。',
     );
   }
 

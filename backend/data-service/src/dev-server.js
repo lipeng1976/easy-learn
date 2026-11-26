@@ -338,6 +338,7 @@ const server = createServer(async (req, res) => {
     headers: req.headers,
     body,
     bytes: isBinary && raw.length > 0 ? raw : null,
+    remoteAddress: remoteAddress,
   });
 
   res.writeHead(out.status, {

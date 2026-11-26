@@ -43,19 +43,30 @@ const countIn = (prefix) => rels.filter((r) => r.startsWith(`${prefix}/`)).lengt
 // 判据仍然有效：没被 git 忽略的密钥 / 构建产物照样会被下面的禁入项抓住。
 function gitIgnored(paths) {
   if (!fs.existsSync(path.join(ROOT, '.git')) || paths.length === 0) return new Set();
-  try {
-    const out = execFileSync('git', ['check-ignore', '--no-index', '-z', '--stdin'], {
-      cwd: ROOT,
-      input: Buffer.from(`${paths.join('\0')}\0`),
-      encoding: 'utf8',
-    });
-    return new Set(String(out).split('\0').filter(Boolean).map((p) => p.replace(/\\/g, '/')));
-  } catch (err) {
-    // 退出码 1 = 没有任何文件被忽略（正常结果）。
-    if (err.status === 1) return new Set();
-    failures.push(`git check-ignore 执行失败：${String(err.stderr ?? err.message).split('\n')[0]}`);
-    return new Set();
+  const out = new Set();
+  // 分批：一次塞上万个路径时 git 会超出参数上限报错，
+  // 那时若把错误当「没有忽略项」，被忽略的构建产物会被当成入库文件，
+  // 自检变红但真正原因被埋住 —— 正是这类「静默失败」要防的。
+  const BATCH = 500;
+  for (let i = 0; i < paths.length; i += BATCH) {
+    const slice = paths.slice(i, i + BATCH);
+    try {
+      const stdout = execFileSync('git', ['check-ignore', '--no-index', '-z', '--stdin'], {
+        cwd: ROOT,
+        input: Buffer.from(`${slice.join('\0')}\0`),
+        encoding: 'utf8',
+      });
+      for (const p of String(stdout).split('\0').filter(Boolean)) {
+        out.add(p.replace(/\\/g, '/'));
+      }
+    } catch (err) {
+      // 退出码 1 = 这一批没有任何文件被忽略（正常结果）。
+      if (err.status === 1) continue;
+      failures.push(`git check-ignore 执行失败：${String(err.stderr ?? err.message).split('\n')[0]}`);
+      return new Set();
+    }
   }
+  return out;
 }
 const ignoredAll = gitIgnored(rels);
 const deliverables = rels.filter((r) => !ignoredAll.has(r));

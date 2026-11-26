@@ -374,7 +374,7 @@ export function createApp({
   }
 
   /**
-   * @param {{method: string, pathname: string, query: object, headers: object, body: object}} request
+   * @param {{method: string, pathname: string, query: object, headers: object, body: object, remoteAddress?: string}} request
    * @returns {Promise<{status: number, headers: object, body: string}>}
    */
   return async function handle(request) {
@@ -446,10 +446,17 @@ export function createApp({
       // 记下这是哪台设备开的会话。只在建会话时用得上，但要**从第一次**
       // 就开始写 —— 「列出登录设备」这个功能迟早要有，那时补写不进历史会话。
       const clientLabel = String(headers['user-agent'] ?? headers['User-Agent'] ?? '').slice(0, 200);
+      // 登录留痕用的来源 IP。转发头优先：云函数网关会给 X-Forwarded-For；
+      // 本机 FRP 是纯 tcp 转发，没有转发头，就退回 socket 地址（127.0.0.1）。
+      // 只取第一段，逗号后面是代理链，不是客户端。
+      const forwarded = String(headers['x-forwarded-for'] ?? headers['X-Forwarded-For'] ?? '')
+        .split(',')[0].trim();
+      const realIp = String(headers['x-real-ip'] ?? headers['X-Real-IP'] ?? '').trim();
+      const clientIp = (forwarded || realIp || String(request.remoteAddress ?? '')).slice(0, 64);
 
       if (route.public === true) {
         const result = await withAuthTransaction(authPool, (client) => route.handler({
-          client, sessionSecret, now, requestId, clientLabel,
+          client, sessionSecret, now, requestId, clientLabel, clientIp,
         }, input));
         // raw 公开路由（/app/download）：返回值本身就是响应，不包信封。
         // 与受保护分支的 raw 口径一致 —— 客户端对「字节」只写一套解析。

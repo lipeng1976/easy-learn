@@ -186,3 +186,21 @@ release 构建 248s → 包内 `lib/*/libapp.so` 三个 ABI 都含两个 FRP 地
 **已知历史遗留**（非本次引入，未改）：`npm test` 的 `quota-positions` 判据、
 前端 5 条跨栈对照/批处理测试仍读迁移前路径（`serverless/...`、`lib/...`、`tools/`），
 因此全量套件里有 6 条红；本次新增判据独立全绿。
+
+## 9. 登录留痕（030）
+
+每次**成功**登录写一行到 `login_log`：账号（手机号）、时间、来源 IP、UA 摘要、方式
+（`password` / `register`）。失败登录不写。
+
+- 迁移：`db/migrations/030_login_log.sql`（本机库已应用；表 32）。
+- 写入：`auth.login` / `auth.register` 在**发 token 的同一个事务**里写，
+  不会出现「日志说登录成功、会话却没发出去」的幽灵记录。
+- IP：优先 `X-Forwarded-For` 第一段 → `X-Real-IP` → socket 地址（最多 64 字符）。
+  ⚠️ **FRP 是纯 tcp 转发，不带转发头**，所以公网 `/auth/login` 记的是 `127.0.0.1`；
+  这是部署事实，不是 bug。要真实公网 IP 得改 FRP 为 http/proxy protocol 或前置 https 网关。
+- 权限：`app_auth`（BYPASSRLS）**只有 INSERT**，`assertAuthRoleScoped()` 会断言它没有
+  SELECT/UPDATE/DELETE —— 否则未登录连接能读改所有人的登录历史，且功能测试全绿无症状。
+  用户查自己的用 `app_rls`（RLS policy `user_id = app.user_id`）；全表审计用 `easylearn_admin`。
+- 判据：`auth.test.js` 新增 2 条（成功写/失败不写、转发头与 socket 兜底）。
+  证伪：注释掉 `recordLogin` 的密码登录调用，「成功登录写账号/时间/IP/UA」变红。
+- 真 HTTP 实测：本机带 XFF 登录 → `ip=203.0.113.55`；公网 FRP 登录 → `ip=127.0.0.1`。

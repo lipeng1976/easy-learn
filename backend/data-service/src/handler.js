@@ -375,6 +375,8 @@ export function toRequest(rawEvent) {
     headers,
     body,
     bytes: isBinary && raw.length > 0 ? raw : null,
+    // 云函数网关在 requestContext 里给来源 IP（转发头缺失时的兜底）。
+    remoteAddress: http.sourceIp ?? event?.requestContext?.sourceIp ?? '',
   };
 }
 

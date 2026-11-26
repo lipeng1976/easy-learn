@@ -232,8 +232,29 @@ export async function register(ctx, body) {
   // 回读而不是拿刚插进去的值拼一个对象：
   // 「存进去了什么」必须由数据库回答，拼出来的对象永远是成功的样子。
   const row = await selectUserById(ctx.client, id);
+  await recordLogin(ctx, { userId: id, account: phone, method: 'register' });
   const session = await startSession(ctx, { userId: id, role, now });
   return { token: session.token, expiresAt: session.expiresAt, user: toApiUser(row) };
+}
+
+/**
+ * 登录留痕。调用方必须已经验过账号密码 —— 失败不记（见 030 迁移）。
+ *
+ * 走 ctx.client（app_auth 连接）而不是新开连接：日志和发 token 在**同一个
+ * 事务**里，要么都成功，要么都不留。分开写会留下「日志说登录成功、
+ * 但会话没发出来」的幽灵记录。
+ */
+async function recordLogin(ctx, { userId, account, method }) {
+  await ctx.client.query(
+    `insert into login_log (id, user_id, account, logged_at, ip, client, method)
+     values ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      newId(), userId, account, new Date(ctx.now()),
+      String(ctx.clientIp ?? '').slice(0, 64),
+      String(ctx.clientLabel ?? '').slice(0, 200),
+      method,
+    ],
+  );
 }
 
 /**
@@ -275,6 +296,7 @@ export async function login(ctx, body) {
     );
   }
 
+  await recordLogin(ctx, { userId: row.id, account: phone, method: 'password' });
   const session = await startSession(ctx, { userId: row.id, role: row.role, now });
   return { token: session.token, expiresAt: session.expiresAt, user: toApiUser(row) };
 }
