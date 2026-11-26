@@ -13,10 +13,11 @@ enum UpdatePhase { idle, checking, downloading, ready, failed }
 /// 页面（个人页卡片）与启动弹窗共用同一个实例，避免「两处各查一次、
 /// 一个说有新版一个说没有」——那种分叉在服务端的清单变了时尤其容易发生。
 class UpdateController extends GetxController {
+  // 用 this._service 会把私有字段暴露成命名参数，破坏「只能由工厂注入」的约束。
   // ignore: prefer_initializing_formals
   UpdateController({AppUpdateService? service, ApkInstaller? installer})
-      : _service = service,
-        _installer = installer;
+      : _service = service, // ignore: prefer_initializing_formals
+        _installer = installer; // ignore: prefer_initializing_formals
 
   AppUpdateService? _service;
   ApkInstaller? _installer;
@@ -25,7 +26,6 @@ class UpdateController extends GetxController {
   final info = Rxn<UpdateInfo>();
   final progress = 0.0.obs;
   final message = ''.obs;
-  UpdateCheckResult? _lastCheck;
 
   /// 编译期烧入的版本号。构建脚本每次构建都会递增，见 tools/build-local-apk.mjs。
   static const int currentVersionCode =
@@ -58,18 +58,25 @@ class UpdateController extends GetxController {
     message.value = '';
     try {
       final result = await _effectiveService.check(bases);
-      _lastCheck = result;
+      // 必须清空旧 info：服务端从「有新版」回退到「无更新」时，
+      // 留着旧对象会让卡片的按钮继续可点，点开却下载不到东西。
+      // hasUpdate 从 info 派生，所以这里一赋值，卡片按钮立刻跟着变。
       info.value = result.latest;
       phase.value = UpdatePhase.idle;
       return result;
     } on Object catch (e) {
       message.value = '检查更新失败：$e';
+      info.value = null; // 检查失败也不能留着上次的「可升级」状态。
       phase.value = UpdatePhase.failed;
       return const UpdateCheckResult(available: false);
     }
   }
 
-  bool get hasUpdate => _lastCheck?.hasNewerThan(currentVersionCode) ?? false;
+  /// 从可观察的 [info] 派生，卡片按钮才会在检查完成后自动重绘。
+  bool get hasUpdate {
+    final latest = info.value;
+    return latest != null && latest.versionCode > currentVersionCode && latest.hasSafeFileName;
+  }
 
   Future<DownloadedApk?> downloadAndInstall() async {
     final latest = info.value;

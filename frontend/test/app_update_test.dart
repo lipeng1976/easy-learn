@@ -6,7 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
-import '../lib/services/app_update_service.dart';
+import 'package:easy_learn_app/services/app_update_service.dart';
 
 /// 更新链路的判据：**只断结果不算通过**，这里用假 HTTP 客户端真跑
 /// 「清单 → 下载 → 写盘 → sha256 → 失败删除」整条链。

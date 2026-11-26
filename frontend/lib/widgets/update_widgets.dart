@@ -6,8 +6,9 @@ import '../services/app_update_service.dart';
 
 /// 个人页的「版本更新」入口。
 ///
-/// 只在本机版（有数据服务 + 服务端配了更新包）真正可用：查不到清单时
-/// **不显示**，而不是显示一个点了没反应的按钮。
+/// 卡片**始终显示**：用户要能在菜单里一眼找到升级入口。按钮则只在真的有
+/// 新版时可点，没新版时灰着 —— 既不误导「点了会检查」，也不给一个只会
+/// 回「已是最新」的空按钮。
 class UpdateCard extends StatefulWidget {
   const UpdateCard({super.key});
 
@@ -22,8 +23,14 @@ class _UpdateCardState extends State<UpdateCard> {
   @override
   void initState() {
     super.initState();
-    // 静默预检一次：只决定卡片显不显示，不弹窗（启动提醒由 main 里那次负责）。
-    controller.check(showSpinner: false).then((result) {
+    // 启动时那次检查已经拿到新版就别再查：这里若网络抖一下把 info 清空，
+    // 按钮会无故变灰，用户明明看到过提醒却点不动。
+    if (controller.hasUpdate) {
+      _checked = true;
+      return;
+    }
+    // 静默预检一次：只决定按钮能不能点，不弹窗（启动提醒由 main 里那次负责）。
+    controller.check(showSpinner: false).then((_) {
       if (!mounted) return;
       setState(() => _checked = true);
     });
@@ -31,9 +38,6 @@ class _UpdateCardState extends State<UpdateCard> {
 
   @override
   Widget build(BuildContext context) {
-    final hasUpdate = controller.hasUpdate;
-    if (_checked && !hasUpdate) return const SizedBox.shrink();
-
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
@@ -54,34 +58,38 @@ class _UpdateCardState extends State<UpdateCard> {
               ],
             ),
             const SizedBox(height: 8),
-            if (hasUpdate)
-              Text(
-                '发现新版本 ${controller.info.value?.versionName ?? ''}，建议更新后使用。',
-                style: const TextStyle(color: Colors.green),
-              )
-            else
-              const Text('检查是否有新版本。更新包只在本机部署上提供。'),
-            const SizedBox(height: 12),
+            // 文案和按钮必须在同一个 Obx 里：检查是别处（启动/本卡片 initState）
+            // 触发的，info 一变就要一起重绘，不能让「发现新版本」和灰按钮并存。
             Obx(() {
               final phase = controller.phase.value;
-              return SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: phase == UpdatePhase.downloading
-                      ? null
-                      : () async {
-                          final result = await controller.check();
-                          if (!context.mounted) return;
-                          if (result.hasNewerThan(UpdateController.currentVersionCode)) {
-                            showUpdateDialog(context, controller);
-                          } else {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('当前已是最新版本')),
-                            );
-                          }
-                        },
-                  child: Text(phase == UpdatePhase.checking ? '检查中…' : '检查更新'),
-                ),
+              final hasUpdate = controller.hasUpdate;
+              final latest = controller.info.value;
+              // 没有新版本时按钮必须灰着：这个按钮的语义是「去升级」，
+              // 不是「再查一次」。想重新检查，退出个人页再进来（initState 会查）。
+              final canUpdate = hasUpdate
+                  && phase != UpdatePhase.checking
+                  && phase != UpdatePhase.downloading;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (!_checked)
+                    const Text('正在检查更新…', style: TextStyle(color: Colors.grey))
+                  else if (hasUpdate)
+                    Text(
+                      '发现新版本 ${latest?.versionName ?? ''}，建议更新后使用。',
+                      style: const TextStyle(color: Colors.green),
+                    )
+                  else
+                    const Text('当前已是最新版本。更新包只在本机部署上提供。'),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: canUpdate ? () => showUpdateDialog(context, controller) : null,
+                      child: Text(phase == UpdatePhase.downloading ? '下载中…' : '检查更新'),
+                    ),
+                  ),
+                ],
               );
             }),
           ],
