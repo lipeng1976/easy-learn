@@ -1,7 +1,9 @@
 package cn.easylearn.app
 
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -10,11 +12,13 @@ import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
 import android.view.WindowManager
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.StandardMethodCodec
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -36,6 +40,9 @@ class MainActivity : FlutterActivity() {
         /// 的手机锁上 —— 而熄屏本身又会触发「离开应用自动暂停」，
         /// 看起来就是「计时莫名其妙停了」。
         const val SCREEN_CHANNEL = "cn.easylearn.app/screen"
+
+        /// 自我更新：Dart 下载完成后把 APK 路径交给这里拉系统安装器。
+        const val UPDATE_CHANNEL = "cn.easylearn.app/updater"
         const val STATE_INITIALIZING = 0
         const val STATE_READY = 1
         const val STATE_UNAVAILABLE = -1
@@ -217,6 +224,49 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        // 自我更新通道。**不能**在这里抛异常：卓易通 / 某些 ROM 没有安装器，
+        // 那是「更新装不上」而不是「app 崩了」。统一回 false，让 Dart 侧把
+        // APK 路径显示出来，用户仍能手动点装。
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            UPDATE_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "installApk" -> {
+                    val installed = runCatching { installApk(call.argument<String>("path")) }
+                        .getOrElse { e ->
+                            Log.w(TAG, "拉起安装器失败：${e.message}")
+                            false
+                        }
+                    result.success(installed)
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /// 用 FileProvider 把 cache 里的 APK 交给系统安装器。
+    /// 返回 true 只表示**intent 发出去了**，不代表用户最后真的点了安装。
+    private fun installApk(path: String?): Boolean {
+        if (path.isNullOrBlank()) return false
+        val file = File(path)
+        if (!file.exists() || !file.name.endsWith(".apk", ignoreCase = true)) return false
+
+        val uri: Uri = FileProvider.getUriForFile(
+            this,
+            "${applicationContext.packageName}.updateprovider",
+            file,
+        )
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        // 没有能处理 APK 的 Activity（卓易通容器很可能就是这种），startActivity 会抛。
+        if (intent.resolveActivity(packageManager) == null) return false
+        startActivity(intent)
+        return true
     }
 
     /// 用户挑好的引擎包名；空 = 用系统默认那个。

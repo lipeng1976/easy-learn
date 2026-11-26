@@ -47,7 +47,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync,
+  appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,6 +89,18 @@ const dryRun = hasFlag('--dry-run');
 const noProbe = hasFlag('--no-probe');
 const copyOut = hasFlag('--out');
 const outDir = opt('--out-dir') ?? 'D:/easy_learn_home/dist';
+
+// ── 更新包发布（前台提醒升级用）────────────────────────────────
+// `versionCode` 用 epoch 秒：旧包是 1，任何新构建都严格大于它；2038 年前不会溢出 int32。
+// 版本名从 pubspec 的 base version 取，附加构建时间戳，用户能看出是哪次编译的。
+const updateDir = opt('--update-dir') ?? 'D:/easy_learn_home/app-updates';
+const changelog = opt('--changelog') ?? '修复已知问题，优化使用体验';
+const publishUpdate = !hasFlag('--no-publish');
+const buildNumber = Math.floor(Date.now() / 1000);
+const pubspecText = readFileSync(join(repoRoot, 'pubspec.yaml'), 'utf8');
+const baseVersion = pubspecText.match(/^version:\s*([0-9]+\.[0-9]+\.[0-9]+)/m)?.[1] ?? '1.0.0';
+const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+const buildName = `${baseVersion}+${stamp}`;
 
 // 图标/标识：默认换成「本机版」那一套（绿图标 + 伴学·本机 + 独立包名）
 const iconMode = opt('--icon') ?? 'local'; // local | none
@@ -366,7 +378,9 @@ if (dryRun) {
       `--dart-define=DATA_API_FALLBACK_URLS=${fallbackDataUrls.join(',')} ` +
       `--dart-define=AI_BASE_URL=${aiUrl} ` +
       `--dart-define=AI_FALLBACK_URLS=${fallbackAiUrls.join(',')} ` +
-      `--dart-define=SERVER_INSTANCE_ID=${instanceId}`,
+      `--dart-define=SERVER_INSTANCE_ID=${instanceId} ` +
+      `--build-number=${buildNumber} --build-name=${buildName} ` +
+      `--dart-define=APP_VERSION_CODE=${buildNumber} --dart-define=APP_VERSION_NAME=${buildName}`,
   );
   say(`  应用标识：${JSON.stringify(identity)}`);
   restoreAll();
@@ -408,6 +422,13 @@ const args = [
   '--dart-define=AI_FALLBACK_URLS=' + fallbackAiUrls.join(','),
   // 探测时用它排除「同网段的另一台机器」。
   '--dart-define=SERVER_INSTANCE_ID=' + instanceId,
+  // 版本号：pubspec 里写死 1.0.0+1 会让所有历史包 versionCode 都是 1，
+  // 前台无从判断「已装的是不是旧版」。构建号与 dart-define 双写：
+  // 前者进 AndroidManifest，后者给 Dart 侧读来比对清单。
+  '--build-number=' + buildNumber,
+  '--build-name=' + buildName,
+  '--dart-define=APP_VERSION_CODE=' + buildNumber,
+  '--dart-define=APP_VERSION_NAME=' + buildName,
 ];
 
 say('');
@@ -471,10 +492,34 @@ if (identity.label) say('  应用名：' + identity.label);
 
 if (copyOut) {
   mkdirSync(outDir, { recursive: true });
-  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
   const dest = join(outDir, `easy-learn-local-${host}-${stamp}.apk`);
   copyFileSync(apk, dest);
   say('  已另存：' + dest);
+}
+
+// ── ⑦ 发布更新包 ────────────────────────────────────────────────
+// 清单先写临时文件，再一次性 copyFileSync 覆盖：服务端 readFileSync 是整读，
+// 直接 writeFileSync 同一个文件会先截断再写，恰在那一瞬检查的客户端会拿到半截 JSON。
+if (publishUpdate) {
+  mkdirSync(updateDir, { recursive: true });
+  const fileName = `easy-learn-local-${host}-${stamp}.apk`;
+  copyFileSync(apk, join(updateDir, fileName));
+  const manifest = {
+    versionCode: buildNumber,
+    versionName: buildName,
+    changelog,
+    fileName,
+    size: bytes,
+    sha256: sha,
+    publishedAt: new Date().toISOString(),
+  };
+  const manifestPath = join(updateDir, 'manifest.json');
+  const tmpManifest = join(updateDir, `manifest.json.tmp-${process.pid}`);
+  writeFileSync(tmpManifest, JSON.stringify(manifest, null, 2));
+  // Windows 上 copyFileSync 覆盖已存在的目标是支持的（不加 COPYFILE_EXCL）。
+  try { copyFileSync(tmpManifest, manifestPath); } finally { unlinkSync(tmpManifest); }
+  say(`  更新包已发布：${join(updateDir, fileName)}`);
+  say(`  更新清单：${manifestPath}（versionCode=${buildNumber}）`);
 }
 
 say('\n⚠️ 装到手机后：手机必须和这台电脑在同一个可达网络里（同一 WiFi，或组网工具已连接）。');

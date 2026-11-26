@@ -15,6 +15,7 @@ import '../../repositories/ima_repository.dart';
 import '../../services/database_service.dart';
 import '../../services/data_api_client.dart';
 import '../../widgets/point_widgets.dart';
+import '../../widgets/update_widgets.dart';
 import '../student/widgets/tts_settings_sheet.dart';
 import 'point_ledger_page.dart';
 
@@ -227,6 +228,10 @@ class _ProfilePageState extends State<ProfilePage> {
               const _ImaSyncCard(),
               const SizedBox(height: 16),
             ],
+            // 更新卡片自己判断「服务端有没有更新包」：没有就渲染成空，
+            // 不显示一个点了没反应的按钮。
+            const UpdateCard(),
+            const SizedBox(height: 16),
             _SignOutCard(name: user.name, phone: user.phone, role: user.role),
           ],
         ],

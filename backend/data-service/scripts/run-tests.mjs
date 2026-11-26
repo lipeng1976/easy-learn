@@ -139,6 +139,8 @@ try {
           // 试卷错题 MD → review_mistake：格式闸挡住自动镜像、幂等删旧行必须
           // 同时带 student_id + source_type，否则会静默删掉其它来源的错题。
           'test/exam-mistake-import.test.js',
+          // 本机版 App 更新：纯单元（清单/字节/路径穿越），不碰库、不联网。
+          'test/app_update.test.js',
 
           // 清单自身的守门人：每个 test/*.test.js 都必须在上面出现过。
           // 它自己也在清单里（自指不会递归，它只读文件、不 spawn）。

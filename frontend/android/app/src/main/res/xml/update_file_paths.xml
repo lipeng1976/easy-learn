@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自我更新用的 APK 落在 getTemporaryDirectory()（cache 目录）。
+     只放行这一处：把 root 或整个 files 目录交出去，等于让安装器能读全私有的凭证库。 -->
+<paths>
+    <cache-path name="updates" path="." />
+</paths>

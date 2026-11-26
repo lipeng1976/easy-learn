@@ -134,3 +134,55 @@ release 构建 248s → 包内 `lib/*/libapp.so` 三个 ABI 都含两个 FRP 地
 > `npm run verify` 的禁入项/大文件/绝对路径扫描现在以 **git 会跟踪的文件**为准
 > （`git check-ignore`），因此 `frontend/build/`、`frontend/.dart_tool/`、签名材料
 > 这些本机产物存在时不会误报；未忽略的 `fake.env.prod` 仍会立刻把禁入项判红。
+
+## 8. 前台自我更新（2026-11-26）
+
+**目标**：每次重新编译本机 APK 后，已装旧版在前台收到提醒，用户**手工**选择是否升级；
+绝不后台自动下载或静默安装。
+
+**服务端**（`backend/data-service/src/routes/app_update.js`，两条公开路由）：
+
+| 端点 | 作用 |
+|---|---|
+| `GET /app/update` | 读 `UPDATE_PACKAGE_DIR/manifest.json`，回 `{available, latest}`；没配目录/没生成清单回 `available:false`，静默 |
+| `GET /app/download` | `raw: true`，按清单点名的 APK 回字节；`fileName` 必须裸名 + `.apk`，挡 `../` 穿越 |
+
+- 公开而非挂 `AuthGuard`：旧版可能因 bug 根本登不进去，更新检查必须在登录前可用。
+- `manifest.json` 只回契约字段（versionCode/versionName/changelog/fileName/size/sha256/publishedAt），
+  不回清单里的内部字段，也不回绝对路径。
+- 本机 `D:\easy_learn_home\config\local.env` 加 `UPDATE_PACKAGE_DIR=D:/easy_learn_home/app-updates`。
+  改完要重启数据服务（看门狗会拉起）。
+
+**客户端**：
+
+- `UpdateController.currentVersionCode` 读 `APP_VERSION_CODE` dart-define（默认 1）。
+- `main.dart` 冷启动后 post-frame 静默检查一次；有新版本弹确认框，只显示「下载并更新 / 稍后」。
+- 个人页「版本更新」卡片可手工触发；没有更新包时整卡不渲染。
+- 下载走 `http.StreamedResponse` 流式写 `getTemporaryDirectory()`，按 `sha256` 校验；
+  校验失败删掉坏包（否则下次会被相同大小骗过不再重下）。主地址失败自动切 FRP 备用。
+- 安装走 `MethodChannel('cn.easylearn.app/updater')` → Android `FileProvider` +
+  `ACTION_VIEW`。**卓易通容器能否拉起安装器未实测**：失败时 Dart 端显示 APK 完整路径，
+  让用户去文件管理器手动点装；绝不把「intent 发出去」说成「装好了」。
+
+**构建脚本**（`scripts/tools/build-local-apk.mjs`）：
+
+- 每次构建用 epoch 秒当 `versionCode`（`--build-number` + `APP_VERSION_CODE` 双写），
+  解决历史所有包 `versionCode=1` 导致无法判断新旧的问题；2038 年前不溢出。
+- 构建成功后把 APK 和 `manifest.json` 一起拷到 `UPDATE_PACKAGE_DIR`；
+  `--changelog "…"` 可指定更新说明，`--no-publish` 可只构建不发布。
+- 清单先写临时文件再整体覆盖，避免客户端读到半截 JSON。
+
+**验收（真跑）**：
+
+- 服务端 7 条判据真跑通过；证伪：临时去掉公开 raw 分支，恰好「APK 必须是 Buffer」那条红。
+- 客户端 7 条判据真跑通过；证伪：临时关掉 sha256 校验，恰好「sha256 不匹配」那条红。
+- 真 HTTP：`GET /app/update` 回 `versionCode=1795656761`；`GET /app/download` 回 200 +
+  `application/vnd.android.package-archive` + 77,971,251 字节，首字节 `PK`；
+  公网 `8.138.227.136:13390/app/update` 同样 200。
+- APK `aapt dump badging` 的 versionName=`1.0.0+202611260132`；三个 ABI 的 `libapp.so`
+  都含该字符串；v2 签名指纹与 10-28 旧包一致，可直接覆盖安装。
+- `npm run verify` 12 项全绿；`flutter analyze` 无 error（仅剩 2 条历史 info）。
+
+**已知历史遗留**（非本次引入，未改）：`npm test` 的 `quota-positions` 判据、
+前端 5 条跨栈对照/批处理测试仍读迁移前路径（`serverless/...`、`lib/...`、`tools/`），
+因此全量套件里有 6 条红；本次新增判据独立全绿。

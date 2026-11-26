@@ -8,6 +8,10 @@
          反过来说，如果哪天为了别的功能声明了 CAMERA 权限，
          上面这条路径就会开始走权限检查 —— 那时必须同时做运行时申请。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 自我更新：拉起系统安装器装下载好的 APK。
+         不给这个权限时，intent 会静默失败 —— 用户点了「更新」什么也没发生，
+         所以 Dart 侧仍会在失败时把 APK 路径显示出来让人手动装。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- android:networkSecurityConfig：**只对回环地址放行明文 HTTP**。
          它是 just_audio 的硬要求 —— 音频用 StreamAudioSource 播，而它在非 Web
          平台上无条件经本地 127.0.0.1 的 HTTP 代理转发给 ExoPlayer；targetSdk>=28
@@ -48,6 +52,18 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- 自我更新：把应用私有目录里的 APK 以 content:// 交给系统安装器。
+             targetSdk>=24 直接给 file:// 会抛 FileUriExposedException。
+             authority 用 ${applicationId}，本机版/云版同装时不会抢同一个 provider。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updateprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_file_paths" />
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

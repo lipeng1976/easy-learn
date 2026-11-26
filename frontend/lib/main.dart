@@ -3,10 +3,12 @@ import 'package:get/get.dart';
 
 import 'app.dart';
 import 'controllers/auth_controller.dart';
+import 'controllers/update_controller.dart';
 import 'models/user_model.dart';
 import 'services/cloud_runtime.dart';
 import 'services/credential_store.dart';
 import 'services/database_service.dart';
+import 'widgets/update_widgets.dart';
 
 Future<void> main() async {
   // 装配要在 `runApp` **之前**完成，理由有二：
@@ -49,6 +51,24 @@ Future<void> main() async {
   Get.put(auth);
 
   runApp(const EasyLearnApp());
+
+  // 启动提醒：只查一次、只在有更新时弹，且**绝不自动下载/安装**。
+  //
+  // 放在 runApp 之后的第一帧回调里，而不是 await 在这里 —— 更新检查失败
+  // （没配更新包 / 公网不通）不能拖住首屏 8 秒。Get.context 此时已可用，
+  // 弹窗才有 Material 上下文；没有 context 时安静跳过，不抛错。
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    final context = Get.context;
+    if (context == null) return;
+    final controller = Get.put(UpdateController());
+    if (controller.hasUpdate) return;
+    controller.check(showSpinner: false).then((result) {
+      if (!result.hasNewerThan(UpdateController.currentVersionCode)) return;
+      final ctx = Get.context;
+      if (ctx == null || !ctx.mounted) return;
+      showUpdateDialog(ctx, controller);
+    });
+  });
 }
 
 /// 冷启动时把落盘的会话接回来（云端模式）；纯本地模式返回 null。

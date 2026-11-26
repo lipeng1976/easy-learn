@@ -219,6 +219,7 @@ const app = createApp({
   photoWarnRemaining,
   aiGateway,
   instanceId: process.env.SERVER_INSTANCE_ID ?? '',
+  updatePackageDir: process.env.UPDATE_PACKAGE_DIR ?? '',
 });
 
 /**

@@ -6,6 +6,7 @@ import {
   DEFAULT_QUOTA_PER_STUDENT,
   DEFAULT_QUOTA_WARN_REMAINING,
 } from './image-store-factory.js';
+import * as appUpdate from './routes/app_update.js';
 import * as auth from './routes/auth.js';
 import * as bootstrap from './routes/bootstrap.js';
 import * as calendar from './routes/calendar.js';
@@ -45,7 +46,15 @@ import * as exam from './routes/exam.js';
  * 分类写在路由表里而不是靠路径前缀猜：`/auth/*` 里只有两条是公开的，
  * 用前缀判断迟早会把某条新加的账号接口错误地开放出去。
  */
-export const ROUTES = [
+/**
+ * 路由表由 `createApp` 在拿到 `updatePackageDir` 之后构造。
+ *
+ * 之前是模块级常量，但更新端点需要注入目录 —— 写成常量时 handler 引用了
+ * 函数内的局部变量，模块一加载就 ReferenceError（判据 app_update.test.js 抓到）。
+ * 保留 `buildRoutes` 导出给测试读元数据，不改变「分类写在表里、不靠前缀猜」的口径。
+ */
+export function buildRoutes(updateRoutes) {
+  return [
   // ===== 公开：注册与登录（S2）=====
   { method: 'POST', path: '/auth/register', public: true, handler: auth.register },
   { method: 'POST', path: '/auth/login', public: true, handler: auth.login },
@@ -59,6 +68,15 @@ export const ROUTES = [
     public: true,
     handler: () => { throw notImplemented('微信登录尚未接入（预留端点）'); },
   },
+
+  // ===== 公开：本机版 App 更新（登录前也要能检查）=====
+  //
+  // `public: true` 而不是挂 AuthGuard：旧版本可能因 bug 根本登不进去，
+  // 那时「必须先登录才能检查更新」等于把自救通道堵死。
+  // 清单只回契约字段、下载只认清单里点名的 APK，见 routes/app_update.js。
+  { method: 'GET', path: '/app/update', public: true, handler: updateRoutes.checkUpdate },
+  // `raw: true`：APK 74MB，不能包进 JSON 信封（那会多一次编码且解码端要拆层）。
+  { method: 'GET', path: '/app/download', public: true, raw: true, handler: updateRoutes.downloadApk },
 
   // ===== 受保护：会话管理（S2）=====
   { method: 'GET', path: '/auth/me', handler: auth.me },
@@ -302,7 +320,8 @@ export const ROUTES = [
   { method: 'POST', path: '/data/notifications/read-all', handler: notification.markAllNotificationsRead },
   { method: 'GET', path: '/data/daily-comments', handler: notification.queryDailyComments },
   { method: 'POST', path: '/data/daily-comments', handler: notification.insertDailyComment },
-];
+  ];
+}
 
 /**
  * @param {object} deps
@@ -338,9 +357,16 @@ export function createApp({
    * 得确认「服务是我的」。空值 = 不报这个字段（旧部署兼容）。
    */
   instanceId = '',
+  /**
+   * 更新包目录（`UPDATE_PACKAGE_DIR`）。空 = 这台部署没有更新能力，
+   * 端点仍注册但回「无更新」，客户端据此安静跳过（ima 式的静默降级）。
+   */
+  updatePackageDir = '',
   now = () => Date.now(),
   logger = console,
 }) {
+  const updateRoutes = appUpdate.createUpdateRoutes({ updatePackageDir });
+  const ROUTES = buildRoutes(updateRoutes);
   // 缺 authPool 时立刻报错，而不是等到有人点「注册」才发现：
   // 那会表现成一次线上故障，而它其实是一次部署配置遗漏。
   if (!authPool) {
@@ -425,6 +451,9 @@ export function createApp({
         const result = await withAuthTransaction(authPool, (client) => route.handler({
           client, sessionSecret, now, requestId, clientLabel,
         }, input));
+        // raw 公开路由（/app/download）：返回值本身就是响应，不包信封。
+        // 与受保护分支的 raw 口径一致 —— 客户端对「字节」只写一套解析。
+        if (route.raw === true) return result;
         return jsonResponse(200, okEnvelope(result, { requestId }));
       }
 
