@@ -364,9 +364,15 @@ export function createApp({
   updatePackageDir = '',
   now = () => Date.now(),
   logger = console,
+  /**
+   * ima 后台归档队列。默认用应用连接池自建一条；测试可注入假队列来断言
+   * 「提交不排队 / 提交后才排队」。归档是可选能力，这里不能因它起不来而抛错。
+   */
+  imaArchiveQueue = null,
 }) {
   const updateRoutes = appUpdate.createUpdateRoutes({ updatePackageDir });
   const ROUTES = buildRoutes(updateRoutes);
+  const imaArchive = imaArchiveQueue ?? ima.createImaArchiveQueue({ pool, logger });
   // 缺 authPool 时立刻报错，而不是等到有人点「注册」才发现：
   // 那会表现成一次线上故障，而它其实是一次部署配置遗漏。
   if (!authPool) {
@@ -468,6 +474,11 @@ export function createApp({
       // 这里的两次查询（验签在内存里、会话查一次库）都走鉴权连接。
       const identity = await resolveIdentity(headers, { secret: sessionSecret, authPool, now: now() });
 
+      // 交卷请求只在这里登记「归档谁」，真正排队放到事务提交之后。
+      // 在事务内直接 schedule 的话，后台可能在 commit 前就查库，
+      // ima 档案里会漏掉这次刚提交的打卡（静默、不报错）。
+      const deferredImaArchive = [];
+
       const result = await withRequestContext(pool, identity, async (client, ctx) => {
         // 客户端可以带 studentId 做筛选（家长在两个孩子间切换），
         // 但**只能在这个请求的可见集合里挑**，越界直接 403。
@@ -540,9 +551,20 @@ export function createApp({
            */
           query,
           rawBody: bytes,
+          /**
+           * 交卷登记后台归档。只收学生 id；身份用上面验签过的那份，
+           * 不看客户端自报的 studentId（越界已经被 narrowToVisible 挡掉）。
+           */
+          deferImaArchive: (studentId) => deferredImaArchive.push(studentId),
         };
         return route.handler(client, scoped, input);
       });
+
+      // 事务已提交，才把归档丢到后台：ima 是全量重建，单次几十秒，
+      // 绝不能让学生在交卷那一下等它（客户端 10s 超时会误报「没存上」）。
+      for (const studentId of new Set(deferredImaArchive)) {
+        imaArchive.schedule({ studentId, identity });
+      }
 
       // `raw` 路由的返回值**本身就是响应**（照片字节，见 http.js 的 binaryResponse）。
       // 它们的失败仍然走下面的 catch —— 抛出来的 ApiError 照样是一个 JSON 信封，

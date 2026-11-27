@@ -163,3 +163,18 @@
 - **换 ima 账号**：重连时 `ensureStudentKb` 按库名幂等查重，同一账号不会重复建库；但若换成**另一个账号**，新账号下会另建同名 KB，旧库成孤儿（ima 无删除接口）。是否禁止换账号待定。
 - **旧 APK 兼容**：不带 `studentId` 的 status 会挑「第一个有配置的可见学生」，connect 只配可见列表里的第一个孩子；不会报错，但多孩子家长要切孩子分别配置得用新 APK。\n- **越界 studentId 在真 HTTP 层是 403**：`app.js:narrowToVisible` 对所有 `/data/*` 统一先校验，不因为 ima 是可选功能就放行；handler 内的「按未开通返回」只是第二道防线。这是安全语义，不是「没有 ima 却报错」。
 - 云上部署必须跑 `024` 迁移（`node scripts/migrate.mjs --env-file <文件> --yes`）；本机 `D:\easy_learn_home` 已应用。
+
+## 12. 交卷归档改为后台队列（2026-11-27）
+
+**症状**：英语打卡常提示「成绩已算出，但还没存到云端：网络较慢或服务繁忙」。服务端 access log 显示 `/data/checkin/submit` 每次 29–65s 才回 200，成绩其实已经落库。
+
+**根因**：`submitCheckin` 在请求里 `await syncStudentArchive`。ima 是**全量重建**（KB 查找 + 每科上传 MD，单次 HTTP 上限 15s / COS 60s），而客户端数据面只有 10s 超时 → 误报。
+
+**新口径**：
+
+- `submitCheckin` 只 `ctx.deferImaArchive(quiz.student_id)`，响应里 `ima = { synced:false, reason:'queued' }`。交卷那一刻如实说「还没同步」，不冒充已同步。
+- `app.js` 在 `withRequestContext` **提交后**才调用队列；事务回滚时不排队，避免后台在 commit 前读到旧数据。
+- `routes/ima.js:createImaArchiveQueue` 用**自己的连接**跑 `withRequestContext(pool, identity, ...)`。`void syncStudentArchive(client, ...)` 是禁止写法：请求结束连接就归还池里，挂起的 promise 会在别人的事务上继续跑（身份串号）。同一学生重复排队后来者覆盖前者；串行执行，避免占满连接池反过来拖垮交卷。
+- 失败只记日志，绝不回滚成绩。没有 ima 的家庭照常交卷。
+
+**判据**：`test/ima-archive-queue.test.js`（独立连接 + SET LOCAL 身份 + 提交后才 schedule）、`test/checkin-store.test.js`（交卷事务里没有 ima 查询、不登记就红）。证伪：恢复 `await syncStudentArchive` 后 2 条变红。

@@ -90,6 +90,9 @@ try {
           // 状态与书库恒 2xx、交卷可选同步永不抛错。漏了这条，
           // 家长一进「英文阅读」页就吃红色横幅（11-07 修）。
           'test/ima-optional.test.js',
+          // 交卷后的 ima 归档队列：独立连接 + SET LOCAL 身份 + 失败不外冒。
+          // 漏了它，「后台归档」退化成拿请求连接 fire-and-forget，会静默串号。
+          'test/ima-archive-queue.test.js',
           // 「配置主体是学生」的判据（11-08）：父母共管读同一行、切孩子状态跟着切、
           // connect 只建一个库、交卷与阅读按 studentId 取配置。
           'test/ima-student-scope.test.js',

@@ -1,5 +1,6 @@
 import { ApiError, badRequest, forbidden } from '../../../shared/errors.js';
 import { requireVisibleStudent } from '../auth.js';
+import { withRequestContext } from '../db.js';
 import * as ima from '../ima_openapi.js';
 import {
   getStudentImaConfig,
@@ -217,6 +218,77 @@ export async function syncStudentArchive(client, ctx, studentId) {
     console.error(`[ima] 可选同步意外失败 student=${studentId}: ${e?.message ?? e}`);
     return { synced: false, reason: 'ima_error', message: e?.message ?? String(e) };
   }
+}
+
+/**
+ * 交卷后的 ima 后台归档队列。
+ *
+ * ## 为什么不能 `void syncStudentArchive(...)`
+ *
+ * 请求事务结束就把连接归还池里了。挂起的 promise 若还拿着那条 client，
+ * 会在**别人的事务**上继续查 —— 那是最难查的一类串号（身份串、可见学生串，
+ * 而且单请求测试全绿）。所以后台任务必须用自己的连接，走完整的
+ * `withRequestContext(pool, identity, ...)`：SET LOCAL 身份、查可见学生、
+ * 结束释放，和正常请求走同一条安全路径。
+ *
+ * ## 为什么串行
+ *
+ * ima 归档是**全量重建**（KB 查找 + 每科上传 MD），单次网络上限 15s/COS 60s。
+ * 并行排几个学生会把连接池占满，交卷本身反而拿不到连接——那就把
+ * 「可选同步」变成了「主流程故障」。同一学生重复排队的后来者覆盖前者：
+ * 全量重建只要跑最新那一次，旧的没有意义。
+ */
+export function createImaArchiveQueue({ pool, logger = console }) {
+  /** studentId -> { identity, fetchImpl } */
+  const pending = new Map();
+  // 存 promise 而不是 bool：schedule() 内部已经启动 drain，测试/运维想等它
+  // 排空时 `await q.drain()` 必须等到同一轮结束，不能拿到一个假的「已完成」。
+  let running = null;
+
+  async function runOne(studentId) {
+    const job = pending.get(studentId);
+    if (!job) return;
+    pending.delete(studentId);
+    try {
+      await withRequestContext(pool, job.identity, async (client, ctx) => {
+        await syncStudentArchive(
+          client,
+          { ...ctx, fetchImpl: job.fetchImpl },
+          studentId,
+        );
+      });
+    } catch (e) {
+      // 连接池借不到 / begin / commit 失败：绝不让未捕获的 rejection 冒到进程级。
+      logger.error?.(`[ima] 后台归档失败 student=${studentId}: ${e?.message ?? e}`);
+    }
+  }
+
+  function drain() {
+    if (running) return running;
+    running = (async () => {
+      while (pending.size > 0) {
+        await runOne(pending.keys().next().value);
+      }
+    })().finally(() => {
+      running = null;
+    });
+    return running;
+  }
+
+  function schedule({ studentId, identity, fetchImpl }) {
+    if (!studentId || !identity) return;
+    pending.set(studentId, { identity, fetchImpl });
+    // 不 await：交卷已经返回。drain 内每条任务都自己兜错。
+    void drain().catch((e) => {
+      logger.error?.(`[ima] 后台归档队列异常：${e?.message ?? e}`);
+    });
+  }
+
+  return {
+    schedule,
+    drain,
+    get pendingCount() { return pending.size; },
+  };
 }
 
 /**

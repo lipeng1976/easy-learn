@@ -405,15 +405,11 @@ test('打卡：提交分数由服务端复算，客户端传的 score 一律不�
   const updated = client.queries.find((q) => /update checkin_quiz set status/.test(q.sql));
   assert.ok(updated, '提交后必须把状态置为 done');
 
-  // ima 未连接时必须**明确报告**「没同步」，而不是悄悄什么都不做。
-  // 少了这条断言，「提交后到底有没有试过推送」在测试里是看不见的 ——
-  // 把 syncStudentArchive 那行删掉，其它断言照样全绿。
-  //
-  // 这个用例是学生身份、且（假库里）没有家长关系，所以原因是 `no_owner`：
-  // 连「该往谁家 KB 推」都定不下来。有家长关系但没连 ima 时是
-  // `ima_status=unconnected`，两个都算「没推」。
+  // ima 归档改成提交后后台跑：响应里必须如实说「还没同步、已排队」，
+  // 不能冒充已同步，也不能什么都不说。少这条断言，把 defer 那行删掉
+  // 其余断言照样全绿。
   assert.equal(result.ima.synced, false);
-  assert.match(String(result.ima.reason), /no_owner|ima_status=unconnected/);
+  assert.equal(result.ima.reason, 'queued');
 });
 
 // ===== 计划 → 复习：打卡做错的题进错题本 =====
@@ -513,7 +509,7 @@ test('打卡：提交不存在的 quizId 是 404，不是「成功但没存」',
   );
 });
 
-test('打卡：连了 ima 但推送失败时，提交本身仍然成功（可选同步）', async () => {
+test('打卡：ima 归档不进交卷请求，只登记学生 id（慢网络不再拖住提交）', async () => {
   process.env.IMA_CREDENTIAL_SECRET = 'test-secret-0123456789abcdefghijklmn';
   const { encryptCredential } = await import('../src/ima_repository.js');
   const enc = encryptCredential(
@@ -537,22 +533,24 @@ test('打卡：连了 ima 但推送失败时，提交本身仍然成功（可选
     },
   });
 
+  const deferred = [];
   // 家长身份：凭证挂在他名下，学生是可见的孩子。
   const ctx = {
     ...makeCtx(),
     userId: 'par_1',
     role: 'parent',
     visibleStudents: ['stu_1'],
-    // 网络坏掉：ima 那一路会抛，submit 不能跟着失败。
+    // 网络坏掉：旧实现在这里 await ima，提交会跟着慢/失败。
     fetchImpl: async () => {
       throw new Error('network down');
     },
+    deferImaArchive: (id) => deferred.push(id),
   };
 
+  const started = Date.now();
   const result = await submitCheckin(client, ctx, {
     quizId: 'q_1',
-    // ⚠️ 两道题必须交齐两份作答：交卷的硬不变量是「每题恰好一份」，
-    // 缺份会被 quiz_version_conflict 挡下（见上面的专项判据）。
+    // ⚠️ 两道题必须交齐两份作答：交卷的硬不变量是「每题恰好一份」。
     answers: [
       { index: 0, picked: 'B' },
       { index: 1, picked: 'T' },
@@ -561,8 +559,14 @@ test('打卡：连了 ima 但推送失败时，提交本身仍然成功（可选
 
   assert.equal(result.total, 2, '提交本身必须成功');
   assert.equal(result.score, 1);
-  assert.equal(result.ima.synced, false);
-  assert.equal(result.ima.reason, 'ima_error');
+  assert.equal(result.ima.synced, false, '交卷那一刻还没归档，不许冒充已同步');
+  assert.equal(result.ima.reason, 'queued');
+  assert.deepEqual(deferred, ['stu_1'], '只登记归档谁；身份由 app.js 用验签过的那份');
+  assert.ok(
+    !client.queries.some((q) => /from ima_credential|from ima_student_kb/.test(q.sql)),
+    'ima 的查询绝不能出现在交卷事务里',
+  );
+  assert.ok(Date.now() - started < 500, '坏网络不能拖住交卷');
 
   delete process.env.IMA_CREDENTIAL_SECRET;
 });

@@ -9,7 +9,6 @@ import {
 } from '../../../shared/errors.js';
 import { requireVisibleStudent } from '../auth.js';
 import { requireText, toEnum, toInt, toStringArray, toText } from '../coerce.js';
-import { syncStudentArchive } from './ima.js';
 import { advanceUnitCursor, resolveTextbookPoints } from './textbook.js';
 
 /**
@@ -1066,10 +1065,17 @@ export async function submitCheckin(client, ctx, body) {
     .map((item) => ({ index: item.index, picked: item.picked, question: questions[item.index] }));
   const mistakes = await recordCheckinMistakes(client, quiz, wrongItems);
 
-  // 可选同步：连了 ima 才推，未连接/失败都不影响「提交成功」这件事。
-  // 必须 await（不是 fire-and-forget）：请求结束后连接就归还池里了，
-  // 挂起的 promise 会在别人的事务上继续跑 —— 那是最难查的一类串号。
-  const imaSync = await syncStudentArchive(client, ctx, quiz.student_id);
+  // 可选同步：只登记，**不在这里等**。
+  //
+  // 旧实现在这里 `await syncStudentArchive(...)`，而它是全量重建（KB 查找 +
+  // 每科上传 MD），实测 29–65s；客户端数据面 10s 就超时，于是「已经存好的
+  // 成绩」被误报成「还没存到云端」。真正的 fire-and-forget 也不能直接写
+  // `void syncStudentArchive(client, ...)` —— 请求结束连接就归还池里了，
+  // 挂起的 promise 会在别人的事务上继续跑（身份串号）。
+  // 所以只记下学生 id，由 app.js 在事务**提交后**交给独立连接的后台队列。
+  // 没注入队列的调用方（单测 / 内嵌调用）静默跳过，提交本身照常成功。
+  ctx.deferImaArchive?.(quiz.student_id);
+  const imaSync = { synced: false, reason: 'queued' };
 
   return { quizId, score, total, items, mistakes, ima: imaSync };
 }
