@@ -94,4 +94,44 @@ class WishModel {
           : (redeemRejectedAt ?? this.redeemRejectedAt),
     );
   }
+
+  /// 心愿列表的统一展示顺序：**申请兑现时间越新越靠前**。
+  ///
+  /// 口径（家长端/学生端共用，服务端 `wish.js` 的 ORDER BY 必须逐字对齐）：
+  ///   1. `redeemRequestedAt` 降序，`null`（从没申请过兑现的）排最后；
+  ///   2. 同为 null 时按 `expectedDate` 降序，近的在前；
+  ///   3. 还是并列就按 `id` 升序，保证顺序稳定、每次刷新不跳动。
+  ///
+  /// 为什么用 DateTime 而不是本地库里存的 ISO 字符串排序：本地字符串可能是
+  /// 不同时区写的（`toIso8601String` 带偏移），字典序不等于时间序。
+  ///
+  /// 注意：这是**纯展示顺序**，不改余额/状态判定，也不碰原列表之外的任何东西。
+  static int compareByRequestTimeDesc(WishModel a, WishModel b) {
+    final ar = a.redeemRequestedAt;
+    final br = b.redeemRequestedAt;
+    if (ar != null && br != null) {
+      final c = br.compareTo(ar);
+      if (c != 0) return c;
+    } else if (ar != null) {
+      return -1;
+    } else if (br != null) {
+      return 1;
+    }
+
+    final ae = a.expectedDate;
+    final be = b.expectedDate;
+    if (ae != null && be != null) {
+      final c = be.compareTo(ae);
+      if (c != 0) return c;
+    } else if (ae != null) {
+      return -1;
+    } else if (be != null) {
+      return 1;
+    }
+    return a.id.compareTo(b.id);
+  }
 }
+
+/// 按 [WishModel.compareByRequestTimeDesc] 原地排序，返回同一个列表方便链式调用。
+List<WishModel> sortWishesByRequestTimeDesc(List<WishModel> wishes) =>
+    wishes..sort(WishModel.compareByRequestTimeDesc);

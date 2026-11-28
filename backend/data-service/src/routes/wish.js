@@ -85,7 +85,12 @@ export async function listWishes(client, ctx, query) {
       where student_id = any($1::text[])
         and ($2::text is null or student_id = $2)
         ${extra.sql}
-      order by expected_date nulls last, id`,
+      -- 展示顺序：申请兑现时间越新越靠前；没申请过的按期望日期近的在前；
+      -- 最后 id 保证稳定。与客户端 WishModel.compareByRequestTimeDesc 逐字对齐，
+      -- 改这里必须同步改那里，否则家长端多孩子拼接时会看到两套顺序。
+      order by redeem_requested_at desc nulls last,
+               expected_date desc nulls last,
+               id`,
     [ctx.students, studentId, ...extra.params],
   );
   return { items: rowsToApi(r.rows) };

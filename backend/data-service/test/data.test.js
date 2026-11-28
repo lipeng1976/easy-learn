@@ -1369,6 +1369,37 @@ test('心愿：scope=created 用的是 token 里的角色，不是客户端自�
   );
 });
 
+test('心愿：列表按申请兑现时间倒序，没申请过的按期望日期倒序', async () => {
+  // 造三条时间各异的：两条已申请（早/晚），一条没申请但期望日期最近。
+  const base = Date.now();
+  const at = (offsetMs) => new Date(base + offsetMs).toISOString();
+  const created = [];
+  for (const [i, body] of [
+    { title: '排序-旧申请', redeemRequestedAt: at(-3600_000) },
+    { title: '排序-新申请', redeemRequestedAt: at(-60_000) },
+    { title: '排序-没申请', expectedDate: at(86400_000) },
+  ].entries()) {
+    const res = await call('POST', '/data/wishes', {
+      token: stuToken,
+      body: { studentId: 'stu_001', isPublic: true, pointCost: 0, ...body },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.json));
+    created.push(res.json.data.item.id);
+  }
+
+  const list = await call('GET', '/data/wishes', {
+    token: parentToken,
+    query: { scope: 'public', studentId: 'stu_001' },
+  });
+  assert.equal(list.status, 200, JSON.stringify(list.json));
+  const mine = list.json.data.items.filter((w) => created.includes(w.id));
+  assert.deepEqual(
+    mine.map((w) => w.title),
+    ['排序-新申请', '排序-旧申请', '排序-没申请'],
+    '与客户端 WishModel.compareByRequestTimeDesc 逐字对齐：申请时间新的在前，没申请的在后',
+  );
+});
+
 test('积分：撤销写一条负数冲正，余额回到 0，且账上留痕', async () => {
   const key = 's3-revoke-1';
   const earn = await call('POST', '/data/points/earn', {

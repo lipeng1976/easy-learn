@@ -19,12 +19,15 @@ class WishTab extends StatelessWidget {
     final points = PointController.to;
 
     return Obx(() {
-      final activeWishes = controller.wishes
-          .where((w) => !w.isArchived)
-          .toList();
-      final archivedWishes = controller.wishes
-          .where((w) => w.isArchived)
-          .toList();
+      // 与家长端、服务端 ORDER BY 同一口径：申请的排在前、新的在上。
+      // 这里在页面侧排一次，是因为新建心愿会 insert(0) 到本地列表，
+      // 不重拉页面时顺序会跟服务端不一致。
+      final activeWishes = sortWishesByRequestTimeDesc(
+        controller.wishes.where((w) => !w.isArchived).toList(),
+      );
+      final archivedWishes = sortWishesByRequestTimeDesc(
+        controller.wishes.where((w) => w.isArchived).toList(),
+      );
       final account = points.account.value;
       final studentId = points.studentId.value;
 

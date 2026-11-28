@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../../constants/app_colors.dart';
+import '../../../models/wish_model.dart';
 import '../../../controllers/parent_controller.dart';
 import '../../../utils/date_utils.dart' as date_utils;
 import '../../../utils/pop_route.dart';
@@ -15,9 +16,11 @@ class WishesParentTab extends StatelessWidget {
     final controller = Get.find<ParentController>();
 
     return Obx(() {
-      final activeWishes = controller.visibleWishes
-          .where((w) => !w.isArchived)
-          .toList();
+      // 统一按「申请兑现时间」排序：服务端 ORDER BY 已是这个口径，这里再排一次
+      // 是为了盖住多孩子拼接、以及新申请进来后列表没重拉的情况。
+      final activeWishes = sortWishesByRequestTimeDesc(
+        controller.visibleWishes.where((w) => !w.isArchived).toList(),
+      );
       final balance = controller.points.account.value.balance;
       return ListView(
         padding: const EdgeInsets.all(16),
