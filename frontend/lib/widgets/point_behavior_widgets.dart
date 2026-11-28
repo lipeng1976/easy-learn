@@ -165,69 +165,91 @@ class PointBehaviorTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final enabled = behavior.enabled;
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
+      // 两行布局：扣分是「动作」，不能跟分值/开关/删除这些「配置」挤在一行。
+      // 原先扣分只是一个圆形减号图标，触屏下 tooltip 不显示 → 设置看得到、
+      // 扣分找不到。这里给它一整行带文字的按钮，入口必须一眼可见。
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Flexible(
-                      child: Text(
-                        behavior.name,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: enabled ? AppColors.text : AppColors.textMuted,
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            behavior.name,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: enabled
+                                  ? AppColors.text
+                                  : AppColors.textMuted,
+                            ),
+                          ),
                         ),
+                        if (behavior.builtin) ...[
+                          const SizedBox(width: 6),
+                          const _Tag(text: '内置'),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      enabled ? '每次扣 ${behavior.points} 分' : '已关闭，不会扣分',
+                      style: const TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 12,
                       ),
                     ),
-                    if (behavior.builtin) ...[
-                      const SizedBox(width: 6),
-                      const _Tag(text: '内置'),
-                    ],
                   ],
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  enabled ? '每次扣 ${behavior.points} 分' : '已关闭，不会扣分',
+              ),
+              const SizedBox(width: 8),
+              Switch(value: enabled, onChanged: onEnabled),
+              if (!behavior.builtin)
+                IconButton(
+                  tooltip: '删除',
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              TextButton(
+                onPressed: enabled ? () => _editPoints(context) : null,
+                child: Text(
+                  '改分值 -${behavior.points}',
                   style: const TextStyle(
-                    color: AppColors.textMuted,
                     fontSize: 12,
+                    color: AppColors.textMuted,
                   ),
                 ),
-              ],
-            ),
-          ),
-          TextButton(
-            onPressed: enabled ? () => _editPoints(context) : null,
-            child: Text(
-              '-${behavior.points} 分',
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                color: enabled ? AppColors.danger : AppColors.textMuted,
               ),
-            ),
+              const Spacer(),
+              ElevatedButton.icon(
+                onPressed: enabled ? onDeduct : null,
+                icon: const Icon(Icons.remove_circle_outline, size: 18),
+                label: const Text('扣分'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.danger,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                ),
+              ),
+            ],
           ),
-          Switch(value: enabled, onChanged: onEnabled),
-          IconButton(
-            tooltip: '扣分',
-            onPressed: enabled ? onDeduct : null,
-            icon: const Icon(Icons.remove_circle_outline, size: 20),
-          ),
-          if (!behavior.builtin)
-            IconButton(
-              tooltip: '删除',
-              onPressed: onDelete,
-              icon: const Icon(Icons.delete_outline, size: 20),
-            ),
         ],
       ),
     );

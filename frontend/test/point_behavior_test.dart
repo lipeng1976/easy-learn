@@ -8,6 +8,7 @@ import 'package:easy_learn_app/controllers/point_controller.dart';
 import 'package:easy_learn_app/models/point_model.dart';
 import 'package:easy_learn_app/pages/shared/point_ledger_page.dart';
 import 'package:easy_learn_app/repositories/point_repository.dart';
+import 'package:easy_learn_app/widgets/point_behavior_widgets.dart';
 
 /// 行为扣分的判据。
 ///
@@ -235,6 +236,66 @@ void main() {
     expect(find.text('迟到扣分标记'), findsOneWidget);
     expect(find.text('作业流水标记'), findsNothing,
         reason: '筛选后不该混进加分流水');
+  });
+
+  testWidgets('扣分入口是带文字的按钮，点了真的记一笔；关闭后不可点', (tester) async {
+    var deducted = 0;
+    final behavior = PointBehavior(
+      studentId: 'stu_1',
+      id: 'builtin_late',
+      name: '迟到',
+      points: 2,
+      builtin: true,
+    );
+
+    await tester.pumpWidget(
+      GetMaterialApp(
+        home: Scaffold(
+          body: PointBehaviorTile(
+            behavior: behavior,
+            onDeduct: () => deducted++,
+            onPoints: (_) async {},
+            onEnabled: (_) {},
+            onDelete: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 触屏设备上 tooltip 不显示 → 入口必须有文字，不能只留一个圆形图标。
+    expect(find.widgetWithText(ElevatedButton, '扣分'), findsOneWidget,
+        reason: '扣分是动作，必须一眼看得见');
+    await tester.tap(find.widgetWithText(ElevatedButton, '扣分'));
+    await tester.pumpAndSettle();
+    expect(deducted, 1, reason: '点了扣分按钮必须真的触发记账');
+
+    // 关闭的行为不给扣分，避免误操作。
+    await tester.pumpWidget(
+      GetMaterialApp(
+        home: Scaffold(
+          body: PointBehaviorTile(
+            behavior: PointBehavior(
+              studentId: 'stu_1',
+              id: 'builtin_late',
+              name: '迟到',
+              points: 2,
+              builtin: true,
+              enabled: false,
+            ),
+            onDeduct: () => deducted++,
+            onPoints: (_) async {},
+            onEnabled: (_) {},
+            onDelete: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final button = tester.widget<ElevatedButton>(
+      find.widgetWithText(ElevatedButton, '扣分'),
+    );
+    expect(button.onPressed, isNull, reason: '关闭的行为不能再扣分');
   });
 
   test('源码契约：客户端 DB v33 的行为表只在两处定义', () {
