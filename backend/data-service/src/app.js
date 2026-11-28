@@ -280,6 +280,10 @@ export function buildRoutes(updateRoutes) {
   { method: 'GET', path: '/data/points/balance', handler: points.balanceOf },
   { method: 'GET', path: '/data/points/rules', handler: points.listRules },
   { method: 'POST', path: '/data/points/rules', handler: points.upsertRule },
+  // 行为扣分：配置单独存，扣分仍走 /data/points/earn（负数流水）。
+  { method: 'GET', path: '/data/points/behaviors', handler: points.listBehaviors },
+  { method: 'POST', path: '/data/points/behaviors', handler: points.upsertBehavior },
+  { method: 'POST', path: '/data/points/behaviors/delete', handler: points.deleteBehavior },
 
   // ===== 受保护：心愿（S3）=====
   { method: 'GET', path: '/data/wishes', handler: wish.listWishes },

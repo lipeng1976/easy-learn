@@ -88,6 +88,7 @@ const TRUNCATE = `
   delete from chat_message;
   delete from point_ledger;
   delete from point_rule;
+  delete from point_behavior;
   delete from homework_image;
   delete from review_attempt;
   delete from judgement_ab;
@@ -1428,6 +1429,133 @@ test('积分：家长可以配分值，没配过的动作不留行', async () =>
     `select count(*)::int n from point_rule where student_id = 'stu_001' and action = 'exercise'`,
   );
   assert.equal(rows.rows[0].n, 1, '复合键唯一 → 重复配置是覆盖不是新增');
+});
+
+test('行为扣分：行为按孩子隔离、重配是覆盖，内置行为不能删', async () => {
+  const set = await call('POST', '/data/points/behaviors', {
+    token: parentToken,
+    body: {
+      studentId: 'stu_001',
+      id: 'builtin_late',
+      name: '迟到',
+      points: 2,
+      enabled: true,
+      builtin: true,
+    },
+  });
+  assert.equal(set.status, 200, JSON.stringify(set.json));
+  assert.equal(set.json.data.behavior.builtin, true);
+
+  const custom = await call('POST', '/data/points/behaviors', {
+    token: parentToken,
+    body: {
+      studentId: 'stu_001',
+      id: 'custom_chat',
+      name: '上课讲话',
+      points: 3,
+      enabled: true,
+    },
+  });
+  assert.equal(custom.status, 200, JSON.stringify(custom.json));
+
+  const list = await call('GET', '/data/points/behaviors', {
+    token: parentToken,
+    query: { studentId: 'stu_001' },
+  });
+  assert.equal(list.status, 200, JSON.stringify(list.json));
+  assert.equal(list.json.data.items.length, 2);
+  assert.deepEqual(
+    list.json.data.items.map((x) => x.name).sort(),
+    ['上课讲话', '迟到'],
+  );
+
+  // 另一个孩子看不到（不是 200 + 空理由，而是 403 的显式越界）。
+  const other = await call('GET', '/data/points/behaviors', {
+    token: stu2Token,
+    query: { studentId: 'stu_001' },
+  });
+  assert.equal(other.status, 403);
+
+  // 已配行为重配是覆盖；内置身份不随客户端传值翻转。
+  const again = await call('POST', '/data/points/behaviors', {
+    token: parentToken,
+    body: {
+      studentId: 'stu_001',
+      id: 'builtin_late',
+      name: '迟到',
+      points: 4,
+      enabled: true,
+      builtin: false,
+    },
+  });
+  assert.equal(again.json.data.behavior.points, 4);
+  assert.equal(again.json.data.behavior.builtin, true, 'builtin 是身份，不是可编辑字段');
+
+  const keep = await call('POST', '/data/points/behaviors/delete', {
+    token: parentToken,
+    body: { studentId: 'stu_001', id: 'builtin_late' },
+  });
+  assert.equal(keep.status, 400);
+  const gone = await call('POST', '/data/points/behaviors/delete', {
+    token: parentToken,
+    body: { studentId: 'stu_001', id: 'custom_chat' },
+  });
+  assert.equal(gone.json.data.deleted, true);
+});
+
+test('行为扣分：扣分是一笔负数流水，带行为 id，可按记录查到', async () => {
+  const before = await call('GET', '/data/points/balance', {
+    token: stuToken,
+    query: { studentId: 'stu_001' },
+  });
+  const balanceBefore = before.json.data.balance;
+
+  const deduct = await call('POST', '/data/points/earn', {
+    token: parentToken,
+    body: {
+      studentId: 'stu_001',
+      action: 'behaviorDeduction',
+      points: -2,
+      reason: '迟到',
+      idempotencyKey: 'behavior_ev_1',
+      refType: 'behavior',
+      refId: 'builtin_late',
+    },
+  });
+  assert.equal(deduct.status, 200, JSON.stringify(deduct.json));
+  assert.equal(deduct.json.data.entry.points, -2);
+  assert.equal(deduct.json.data.entry.refId, 'builtin_late');
+
+  // 同一事件重放不重复扣。
+  const retry = await call('POST', '/data/points/earn', {
+    token: parentToken,
+    body: {
+      studentId: 'stu_001',
+      action: 'behaviorDeduction',
+      points: -2,
+      reason: '迟到',
+      idempotencyKey: 'behavior_ev_1',
+      refType: 'behavior',
+      refId: 'builtin_late',
+    },
+  });
+  assert.equal(retry.json.data.created, false);
+
+  const after = await call('GET', '/data/points/balance', {
+    token: stuToken,
+    query: { studentId: 'stu_001' },
+  });
+  assert.equal(after.json.data.balance, balanceBefore - 2);
+
+  const ledger = await call('GET', '/data/points/ledger', {
+    token: parentToken,
+    query: { studentId: 'stu_001', limit: 200 },
+  });
+  const rows = ledger.json.data.items.filter(
+    (x) => x.refType === 'behavior' && x.refId === 'builtin_late',
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].reason, '迟到');
 });
 
 // ===== 路由表本身的守门 =====

@@ -228,13 +228,14 @@ const badEnvLines = envExample.split(/\r?\n/)
 if (badEnvLines.length) failures.push(`.env.example 含非占位值：${badEnvLines.join(' | ')}`);
 else passes.push('.env.example 全部为占位符');
 
-// ── 8. 迁移文件序列 001~029 齐全 ─────────────────────────────────────────
+// ── 8. 迁移文件序列 001~031 齐全 ─────────────────────────────────────────
+// 031 是行为扣分配置表；只盯 001~029 的话，漏掉新迁移也全绿。
 const migrationNames = fs.readdirSync(path.join(ROOT, 'db/migrations'))
   .filter((f) => f.endsWith('.sql')).sort().map((f) => f.slice(0, 3));
-const expected = Array.from({ length: 29 }, (_, i) => String(i + 1).padStart(3, '0'));
+const expected = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(3, '0'));
 const missingSeq = expected.filter((n) => !migrationNames.includes(n));
 if (missingSeq.length) failures.push(`增量迁移缺号：${missingSeq.join(', ')}`);
-else passes.push('db/migrations 001~029 序列完整');
+else passes.push('db/migrations 001~031 序列完整');
 
 // ── 9. 凭据字面量：禁止任何「可用的」口令 / 密钥硬编码 ───────────────────
 // 11-21 已收敛：SQL 口令由运行期 set_config 注入；开发栈凭据随机生成并持久化；

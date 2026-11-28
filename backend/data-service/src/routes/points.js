@@ -1,7 +1,7 @@
 import { badRequest, forbidden } from '../../../shared/errors.js';
 import { requireVisibleStudent } from '../auth.js';
 import { newId, rowToApi, rowsToApi } from '../mapper.js';
-import { toBool, requireInt } from '../coerce.js';
+import { requireText, toBool, requireInt } from '../coerce.js';
 
 /**
  * 积分账本：S1 的第三条契约路径 —— **重试幂等返回原结果**。
@@ -294,4 +294,71 @@ export async function upsertRule(client, ctx, body) {
     [studentId, action, points, enabled],
   );
   return { rule: rowToApi(r.rows[0]) };
+}
+
+// ===== 行为扣分 =====
+//
+// 「迟到 / 旷课 / 家长自定义」不是 point_rule 里的动作：它们每个都有自己的
+// 名字和分值，而且会继续增加。行为表只存配置；真正扣分仍然走
+// `/data/points/earn`（负数流水），这里不碰账本。
+
+/** 行为列表。内置行为由客户端首次进入时按稳定 id 落表，服务端不预生成。 */
+export async function listBehaviors(client, ctx, query) {
+  const studentId = requireVisibleStudent(ctx.visibleStudents, query?.studentId);
+  const r = await client.query(
+    `select student_id, id, name, points, enabled, builtin, created_at, updated_at
+       from point_behavior
+      where student_id = $1
+      order by builtin desc, created_at, id`,
+    [studentId],
+  );
+  return { items: rowsToApi(r.rows) };
+}
+
+/**
+ * 新增或覆盖一个行为。
+ *
+ * `builtin` **不在 UPDATE 集合里**：内置与否是这一行的身份，不是可编辑属性。
+ * 客户端即使把它当 false 传上来，也只能改名字/分值/开关，不能把内置行
+ * 伪装成自定义行再删掉（那样历史记录就没有名字了）。
+ */
+export async function upsertBehavior(client, ctx, body) {
+  const studentId = requireVisibleStudent(ctx.visibleStudents, body.studentId);
+  const id = requireText(body.id, 'id');
+  const name = requireText(body.name, 'name');
+  const points = requireInt(body.points, 'points');
+  if (points < 0) throw badRequest('扣分值不能为负数');
+  if (points > 200) throw badRequest('扣分值不能超过 200');
+  const enabled = toBool(body.enabled, 'enabled') ?? true;
+  const builtin = toBool(body.builtin, 'builtin') ?? false;
+
+  const r = await client.query(
+    `insert into point_behavior (student_id, id, name, points, enabled, builtin, updated_at)
+     values ($1, $2, $3, $4, $5, $6, now())
+     on conflict (student_id, id) do update
+       set name = excluded.name,
+           points = excluded.points,
+           enabled = excluded.enabled,
+           updated_at = now()
+     returning student_id, id, name, points, enabled, builtin, created_at, updated_at`,
+    [studentId, id, name, points, enabled, builtin],
+  );
+  return { behavior: rowToApi(r.rows[0]) };
+}
+
+/** 删除自定义行为。内置行为只能关闭，不能删 —— 历史记录还要靠它显示名字。 */
+export async function deleteBehavior(client, ctx, body) {
+  const studentId = requireVisibleStudent(ctx.visibleStudents, body.studentId);
+  const id = requireText(body.id, 'id');
+  const found = await client.query(
+    'select id, builtin from point_behavior where student_id = $1 and id = $2',
+    [studentId, id],
+  );
+  if (found.rowCount === 0) return { deleted: false };
+  if (found.rows[0].builtin) throw badRequest('内置行为不能删除，可以关闭');
+  await client.query(
+    'delete from point_behavior where student_id = $1 and id = $2',
+    [studentId, id],
+  );
+  return { deleted: true };
 }

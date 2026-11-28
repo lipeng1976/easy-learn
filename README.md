@@ -40,7 +40,7 @@ easy-learn/
 
 | 层 | 技术 |
 |---|---|
-| 前端 | Flutter / Dart，GetX 状态管理，sqflite（客户端 DB v32），Web / Android / iOS / 桌面多端 |
+| 前端 | Flutter / Dart，GetX 状态管理，sqflite（客户端 DB v33），Web / Android / iOS / 桌面多端 |
 | 后端 | Node.js 20 ESM，原生 `node:http`（本机）与阿里云 FC3 handler（云上）双外壳共用 `app.js` |
 | 共享层 | `backend/shared/`：`env.js` `errors.js` `token.js` `query.js` `fc3-http-event.js` |
 | 数据库 | PostgreSQL（云上 RDS-PG），**PG RLS** 做多家庭隔离，事务内 `SET LOCAL` |

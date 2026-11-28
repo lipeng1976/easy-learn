@@ -296,6 +296,18 @@ class DatabaseService
   Future<void> markPointEntryReversed(String id, DateTime reversedAt) =>
       _points.markPointEntryReversed(id, reversedAt);
 
+  @override
+  Future<List<PointBehavior>> queryPointBehaviors(String studentId) =>
+      _points.queryPointBehaviors(studentId);
+
+  @override
+  Future<void> upsertPointBehavior(PointBehavior behavior) =>
+      _points.upsertPointBehavior(behavior);
+
+  @override
+  Future<void> deletePointBehavior(String studentId, String id) =>
+      _points.deletePointBehavior(studentId, id);
+
   // ===== RelationshipRepository =====
 
   @override

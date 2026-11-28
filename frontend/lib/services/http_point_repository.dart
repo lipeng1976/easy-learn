@@ -144,6 +144,30 @@ class HttpPointRepository implements PointRepository {
     await _api.postJson('/data/points/reverse', body: {'entryId': id});
   }
 
+  @override
+  Future<List<PointBehavior>> queryPointBehaviors(String studentId) async {
+    final items = await _api.getItems(
+      '/data/points/behaviors',
+      query: {'studentId': studentId},
+    );
+    return items.map(PointBehavior.fromMap).toList();
+  }
+
+  @override
+  Future<void> upsertPointBehavior(PointBehavior behavior) async {
+    // updatedAt 不送：服务端用 now() 自己记（R3）。
+    await _api.postJson('/data/points/behaviors', body: behavior.toMap()
+      ..remove('updatedAt'));
+  }
+
+  @override
+  Future<void> deletePointBehavior(String studentId, String id) async {
+    await _api.postJson(
+      '/data/points/behaviors/delete',
+      body: {'studentId': studentId, 'id': id},
+    );
+  }
+
   /// 服务端的行 → [PointLedgerEntry]。
   ///
   /// 与本地 `PointLedgerEntry.fromMap` 读同样的键，差别只在**取值方式**：

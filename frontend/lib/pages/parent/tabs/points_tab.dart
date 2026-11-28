@@ -3,8 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 import '../../../constants/app_colors.dart';
+import '../../../controllers/auth_controller.dart';
 import '../../../controllers/parent_controller.dart';
+import '../../../controllers/point_controller.dart';
 import '../../../models/point_model.dart';
+import '../../../widgets/point_behavior_widgets.dart';
 import '../../shared/point_ledger_page.dart';
 // 改分值的数字弹窗。原先这里是本地一份 `_promptInt`，与心愿定价那份是复制品，
 // 两份都踩了同一个「弹窗还没关就 dispose 掉输入框控制器」的坑 —— 现在共用一份。
@@ -23,7 +26,7 @@ class PointsTab extends StatefulWidget {
   State<PointsTab> createState() => _PointsTabState();
 }
 
-enum _Panel { rules, reward, ledger }
+enum _Panel { rules, reward, behavior, ledger }
 
 class _PointsTabState extends State<PointsTab> {
   final controller = Get.find<ParentController>();
@@ -80,6 +83,7 @@ class _PointsTabState extends State<PointsTab> {
             segments: const [
               ButtonSegment(value: _Panel.rules, label: Text('分值设置')),
               ButtonSegment(value: _Panel.reward, label: Text('奖励积分')),
+              ButtonSegment(value: _Panel.behavior, label: Text('行为扣分')),
               ButtonSegment(value: _Panel.ledger, label: Text('积分记录')),
             ],
             selected: {panel},
@@ -91,6 +95,7 @@ class _PointsTabState extends State<PointsTab> {
           else ...[
             if (panel == _Panel.rules) _buildRules(studentId),
             if (panel == _Panel.reward) _buildReward(studentId),
+            if (panel == _Panel.behavior) _buildBehavior(studentId),
             if (panel == _Panel.ledger) _buildLedger(),
           ],
         ],
@@ -198,6 +203,99 @@ class _PointsTabState extends State<PointsTab> {
       studentId: studentId,
       action: action,
       points: value,
+    );
+  }
+
+  /// 行为扣分：内置迟到/旷课/违纪，家长也能加自己的行为。
+  Widget _buildBehavior(String studentId) {
+    final points = controller.points;
+    final behaviors = points.behaviors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '行为扣分${_studentName.isEmpty ? '' : '（$_studentName）'}',
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          '每种行为单独定分值；扣分后可在「积分记录」里按行为查到。',
+          style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+        ),
+        const SizedBox(height: 12),
+        ...behaviors.map(
+          (behavior) => PointBehaviorTile(
+            behavior: behavior,
+            onDeduct: () => _deduct(studentId, behavior),
+            onPoints: (value) => points.setBehavior(
+              studentId: studentId,
+              id: behavior.id,
+              name: behavior.name,
+              points: value,
+              enabled: behavior.enabled,
+              builtin: behavior.builtin,
+            ),
+            onEnabled: (on) => points.setBehavior(
+              studentId: studentId,
+              id: behavior.id,
+              name: behavior.name,
+              points: behavior.points,
+              enabled: on,
+              builtin: behavior.builtin,
+            ),
+            onDelete: () async {
+              final ok = await points.deleteBehavior(
+                studentId: studentId,
+                id: behavior.id,
+              );
+              Get.snackbar(ok ? '已删除' : '未删除', ok ? '' : '内置行为只能关闭');
+            },
+          ),
+        ),
+        if (behaviors.isEmpty)
+          const PointEmptyHint(text: '还没有行为配置，点下面按钮添加。'),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: () => _addBehavior(studentId),
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('新增扣分行为'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _deduct(String studentId, PointBehavior behavior) async {
+    final note = await showBehaviorDeductDialog(
+      behaviorName: behavior.name,
+      points: behavior.points,
+    );
+    if (note == null) return;
+    final parentId = Get.find<AuthController>().currentUser.value?.id ?? '';
+    final result = await controller.points.deductBehavior(
+      studentId: studentId,
+      behaviorId: behavior.id,
+      createdBy: parentId,
+      note: note,
+    );
+    if (!Get.isSnackbarOpen) {
+      Get.snackbar(
+        result == PointGrantOutcome.granted ? '已扣分' : '未扣分',
+        result == PointGrantOutcome.granted
+            ? '${behavior.name} -${behavior.points} 分，已记入积分流水'
+            : '这次没有记上（${result.name}）',
+      );
+    }
+  }
+
+  Future<void> _addBehavior(String studentId) async {
+    final name = await showBehaviorNameDialog();
+    if (name == null || name.isEmpty) return;
+    await controller.points.setBehavior(
+      studentId: studentId,
+      id: 'custom_${DateTime.now().microsecondsSinceEpoch}',
+      name: name,
+      points: 3,
+      enabled: true,
     );
   }
 

@@ -81,6 +81,11 @@ class PointController extends GetxController {
   /// 按孩子缓存的规则，发分时用。
   final Map<String, List<PointRule>> _ruleCache = {};
 
+  /// 行为扣分的配置（迟到 / 旷课 / 自定义行为）。
+  /// 与 [rules] 一样，永远只对应 [studentId] 那个孩子。
+  final RxList<PointBehavior> behaviors = <PointBehavior>[].obs;
+  final Map<String, List<PointBehavior>> _behaviorCache = {};
+
   /// 余额与累计，随时可以从 [ledger] 重算。
   final Rx<PointAccount> account = PointAccount.empty.obs;
 
@@ -92,7 +97,10 @@ class PointController extends GetxController {
   /// 拉某个孩子的账本。切换孩子时直接再调一次即可。
   Future<void> loadFor(String studentId, {bool force = false}) async {
     if (studentId.isEmpty) return;
-    if (!force && this.studentId.value == studentId && ledger.isNotEmpty) {
+    if (!force &&
+        this.studentId.value == studentId &&
+        ledger.isNotEmpty &&
+        behaviors.isNotEmpty) {
       return;
     }
     this.studentId.value = studentId;
@@ -107,6 +115,8 @@ class PointController extends GetxController {
       ledger.assignAll(entries);
       rules.assignAll(configured);
       _ruleCache[studentId] = configured;
+      final configuredBehaviors = await _behaviorsFor(studentId);
+      behaviors.assignAll(configuredBehaviors);
       account.value = PointAccount.fromLedger(entries);
     } finally {
       isLoading.value = false;
@@ -129,7 +139,9 @@ class PointController extends GetxController {
     studentId.value = '';
     ledger.clear();
     rules.clear();
+    behaviors.clear();
     _ruleCache.clear();
+    _behaviorCache.clear();
     account.value = PointAccount.empty;
     isLoading.value = false;
   }
@@ -143,6 +155,33 @@ class PointController extends GetxController {
     );
     _ruleCache[studentId] = configured;
     return configured;
+  }
+
+  /// 行为配置：内置行为第一次进入时按稳定 id 落表。
+  ///
+  /// 只补缺失的，不覆盖已存在的行 —— 家长把「迟到」改成 4 分之后重进页面，
+  /// 不能又变回默认 2 分。内置行是可以改分值/关闭的，只有删除被禁止。
+  Future<List<PointBehavior>> _behaviorsFor(String studentId) async {
+    var rows = await _repository.queryPointBehaviors(studentId);
+    final missing = kBuiltinPointBehaviors.where(
+      (seed) => !rows.any((row) => row.id == seed.id),
+    );
+    if (missing.isNotEmpty) {
+      for (final seed in missing) {
+        await _repository.upsertPointBehavior(
+          PointBehavior(
+            studentId: studentId,
+            id: seed.id,
+            name: seed.name,
+            points: seed.points,
+            builtin: true,
+          ),
+        );
+      }
+      rows = await _repository.queryPointBehaviors(studentId);
+    }
+    _behaviorCache[studentId] = rows;
+    return rows;
   }
 
   static PointRule? _pick(List<PointRule> rules, PointAction action) {
@@ -209,6 +248,97 @@ class PointController extends GetxController {
     if (studentId == this.studentId.value) {
       rules.assignAll(cached);
     }
+  }
+
+  /// 家长改行为的分值 / 名称 / 开关；新增自定义行为也走这里。
+  Future<void> setBehavior({
+    required String studentId,
+    required String id,
+    required String name,
+    required int points,
+    required bool enabled,
+    bool builtin = false,
+  }) async {
+    final next = PointBehavior(
+      studentId: studentId,
+      id: id,
+      name: name,
+      points: points,
+      enabled: enabled,
+      builtin: builtin,
+      updatedAt: clock(),
+    );
+    await _repository.upsertPointBehavior(next);
+    final cached = _behaviorCache[studentId] ?? <PointBehavior>[];
+    final index = cached.indexWhere((row) => row.id == id);
+    if (index >= 0) {
+      cached[index] = next;
+    } else {
+      cached.add(next);
+    }
+    _behaviorCache[studentId] = cached;
+    if (studentId == this.studentId.value) behaviors.assignAll(cached);
+  }
+
+  /// 删除自定义行为。内置行为只许关闭，不许删 —— 历史扣分记录还要显示名字。
+  Future<bool> deleteBehavior({
+    required String studentId,
+    required String id,
+  }) async {
+    final cached = _behaviorCache[studentId] ?? await _behaviorsFor(studentId);
+    PointBehavior? target;
+    for (final row in cached) {
+      if (row.id == id) {
+        target = row;
+        break;
+      }
+    }
+    if (target == null || target.builtin) return false;
+    await _repository.deletePointBehavior(studentId, id);
+    cached.removeWhere((row) => row.id == id);
+    _behaviorCache[studentId] = cached;
+    if (studentId == this.studentId.value) behaviors.assignAll(cached);
+    return true;
+  }
+
+  /// 记一次行为扣分。
+  ///
+  /// 每次扣分都是独立事件，所以防重键带新 id（不像打卡那样有「同一件事」）。
+  /// 真正的扣分值来自行为配置，**不信任界面传来的数**。
+  Future<PointGrantOutcome> deductBehavior({
+    required String studentId,
+    required String behaviorId,
+    required String createdBy,
+    String note = '',
+  }) async {
+    if (studentId.isEmpty) return PointGrantOutcome.noStudent;
+    final cached = _behaviorCache[studentId] ?? await _behaviorsFor(studentId);
+    PointBehavior? behavior;
+    for (final row in cached) {
+      if (row.id == behaviorId) {
+        behavior = row;
+        break;
+      }
+    }
+    if (behavior == null || !behavior.enabled) return PointGrantOutcome.disabled;
+    if (behavior.points <= 0) return PointGrantOutcome.zeroPoints;
+
+    final detail = note.trim();
+    return _write(
+      PointLedgerEntry(
+        id: _newId(),
+        studentId: studentId,
+        action: PointAction.behaviorDeduction.code,
+        points: -behavior.points,
+        reason: detail.isEmpty ? behavior.name : '${behavior.name}：$detail',
+        // 一次扣分就是一次独立事件；合用同一个键会把第二次点按成「重复」。
+        idempotencyKey: 'behavior:${_newId()}',
+        refType: 'behavior',
+        refId: behavior.id,
+        createdAt: clock(),
+        createdBy: createdBy.isEmpty ? studentId : createdBy,
+      ),
+    );
   }
 
   /// 记一笔分。

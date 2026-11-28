@@ -46,4 +46,20 @@ abstract class PointRepository {
   /// 撤销是**标掉原记录 + 补一笔相反数**，不删记录 —— 账本 append-only
   /// 才使得「合并两端数据」退化成按 id 求并集。
   Future<void> markPointEntryReversed(String id, DateTime reversedAt);
+
+  // ===== 行为扣分配置 =====
+  //
+  // 这三条给出默认实现而不是 abstract：项目里有几个只测发分/兑换的
+  // 假仓库，它们不该因为新增一个无关能力就全编译不过。真正会用行为的
+  // 仓库（本地 / HTTP）必须覆盖，覆盖不到就会显式抛 UnimplementedError
+  // —— 宁可炸，也不要静默返回空列表让家长以为「没配过行为」。
+
+  Future<List<PointBehavior>> queryPointBehaviors(String studentId) =>
+      throw UnimplementedError('$runtimeType 未实现 queryPointBehaviors');
+
+  Future<void> upsertPointBehavior(PointBehavior behavior) =>
+      throw UnimplementedError('$runtimeType 未实现 upsertPointBehavior');
+
+  Future<void> deletePointBehavior(String studentId, String id) =>
+      throw UnimplementedError('$runtimeType 未实现 deletePointBehavior');
 }

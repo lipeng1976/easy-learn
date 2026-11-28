@@ -37,11 +37,32 @@ class PointLedgerPage extends StatefulWidget {
   State<PointLedgerPage> createState() => _PointLedgerPageState();
 }
 
+/// 行为筛选的哨兵值：代表「所有行为扣分」，与某个具体行为 id 区分开。
+const String _allBehaviorDeductions = '__all_behavior_deductions__';
+
 class _PointLedgerPageState extends State<PointLedgerPage> {
   List<PointLedgerEntry> entries = const [];
+  List<PointBehavior> behaviors = const [];
+
+  /// 空 = 全部；[_allBehaviorDeductions] = 只看行为扣分；其余 = 某个行为 id。
+  String behaviorFilter = '';
   PointAccount account = PointAccount.empty;
   bool isLoading = true;
   String? error;
+
+  /// 余额始终按**全部**流水算，筛选只影响列表 —— 否则家长一筛选，
+  /// 卡上的余额就跟着变，像是钱突然少了。
+  List<PointLedgerEntry> get visibleEntries {
+    if (behaviorFilter.isEmpty) return entries;
+    if (behaviorFilter == _allBehaviorDeductions) {
+      return entries
+          .where((e) => e.action == PointAction.behaviorDeduction.code)
+          .toList();
+    }
+    return entries
+        .where((e) => e.refType == 'behavior' && e.refId == behaviorFilter)
+        .toList();
+  }
 
   @override
   void initState() {
@@ -56,9 +77,18 @@ class _PointLedgerPageState extends State<PointLedgerPage> {
       final rows = await repo.queryPointLedger(
         widget.studentId,
       );
+      // 行为配置是可选的：老仓库/测试桩没实现时不该拖垮明细页。
+      // 没有配置也仍可按「行为扣分」筛（账本里的 action 足够判断）。
+      List<PointBehavior> configuredBehaviors = const [];
+      try {
+        configuredBehaviors = await repo.queryPointBehaviors(widget.studentId);
+      } catch (_) {
+        configuredBehaviors = const [];
+      }
       if (!mounted) return;
       setState(() {
         entries = rows;
+        behaviors = configuredBehaviors;
         account = PointAccount.fromLedger(rows);
         error = null;
         isLoading = false;
@@ -94,6 +124,34 @@ class _PointLedgerPageState extends State<PointLedgerPage> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                ChoiceChip(
+                  label: const Text('全部'),
+                  selected: behaviorFilter.isEmpty,
+                  onSelected: (_) => setState(() => behaviorFilter = ''),
+                ),
+                ChoiceChip(
+                  label: const Text('行为扣分'),
+                  selected: behaviorFilter == _allBehaviorDeductions,
+                  onSelected: (_) => setState(
+                    () => behaviorFilter = _allBehaviorDeductions,
+                  ),
+                ),
+                ...behaviors.map(
+                  (behavior) => ChoiceChip(
+                    label: Text(behavior.name),
+                    selected: behaviorFilter == behavior.id,
+                    onSelected: (_) => setState(
+                      () => behaviorFilter = behavior.id,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
             if (isLoading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 32),
@@ -101,13 +159,15 @@ class _PointLedgerPageState extends State<PointLedgerPage> {
               )
             else if (error != null)
               PointEmptyHint(text: '读取失败：$error')
-            else if (entries.isEmpty)
-              const PointEmptyHint(
-                text: '还没有积分记录。\n交作业、运动、打卡、复习都能赚积分。',
+            else if (visibleEntries.isEmpty)
+              PointEmptyHint(
+                text: entries.isEmpty
+                    ? '还没有积分记录。\n交作业、运动、打卡、复习都能赚积分。'
+                    : '这个筛选条件下没有记录。',
               )
             else
-              ...entries.map((entry) => PointLedgerTile(entry: entry)),
-            if (entries.isNotEmpty) ...[
+              ...visibleEntries.map((entry) => PointLedgerTile(entry: entry)),
+            if (visibleEntries.isNotEmpty) ...[
               const SizedBox(height: 8),
               const Text(
                 '撤销不会删掉记录，而是补一笔相反的账 —— 所以「已撤销」的那条还会留在这里。',

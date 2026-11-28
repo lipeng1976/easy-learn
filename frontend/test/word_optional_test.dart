@@ -61,10 +61,11 @@ void main() {
     expect(card.contains('_generation'), isTrue, reason: '快速切孩子要丢掉迟到响应');
   });
 
-  test('源码契约：DB v32 三处同步 + 三条路由已注册', () {
+  test('源码契约：DB v33 三处同步 + 三条路由已注册', () {
     final db = File('lib/services/local_database_service.dart').readAsStringSync();
-    expect(db.contains('version: 32,'), isTrue);
+    expect(db.contains('version: 33,'), isTrue);
     expect(db.contains('if (oldVersion < 32)'), isTrue);
+    expect(db.contains('if (oldVersion < 33)'), isTrue);
     expect(db.contains('CREATE TABLE IF NOT EXISTS word_entry_local'), isTrue);
     expect(db.contains('CREATE TABLE IF NOT EXISTS word_answer'), isTrue);
     expect(db.contains('queryWordAnswers'), isTrue);

@@ -50,6 +50,13 @@ enum PointAction {
 
   /// 愿望兑换扣分。由家长定价、家长兑现时触发，**不进设置表**。
   wishRedeem,
+
+  /// 家长手动记录的行为扣分（迟到、旷课、自定义行为）。
+  ///
+  /// 分值不在这里，而在 [PointBehavior] 表：每种行为各有自己的名字和分值，
+  /// 塞进 point_rule 会让「行为名」无处可存，改名还得改数据。
+  /// 账本里用 refId 指向具体行为，所以查记录时能按行为筛。
+  behaviorDeduction,
 }
 
 extension PointActionX on PointAction {
@@ -81,6 +88,8 @@ extension PointActionX on PointAction {
         return '家长奖励';
       case PointAction.wishRedeem:
         return '愿望兑换';
+      case PointAction.behaviorDeduction:
+        return '行为扣分';
     }
   }
 
@@ -112,6 +121,8 @@ extension PointActionX on PointAction {
         return '家长临时给的奖励，分值每次单独填写。';
       case PointAction.wishRedeem:
         return '兑现心愿时按家长定价扣除。';
+      case PointAction.behaviorDeduction:
+        return '家长记录迟到、旷课等行为时扣除，分值按行为单独配置。';
     }
   }
 
@@ -140,6 +151,8 @@ extension PointActionX on PointAction {
         return 0;
       case PointAction.wishRedeem:
         return 0;
+      case PointAction.behaviorDeduction:
+        return 0;
     }
   }
 
@@ -148,12 +161,15 @@ extension PointActionX on PointAction {
   /// 奖励与兑换的分值由家长在具体那一次决定，放进固定表里只会
   /// 让人以为「改了设置就能改定价」，实际不生效 —— 那比不显示更糟。
   bool get configurable =>
-      this != PointAction.parentReward && this != PointAction.wishRedeem;
+      this != PointAction.parentReward &&
+      this != PointAction.wishRedeem &&
+      this != PointAction.behaviorDeduction;
 
   /// 这条动作是加分还是扣分。
   ///
   /// 注意**冲正记录不算动作**，它的正负由被冲掉的那条决定。
-  bool get isDeduction => this == PointAction.wishRedeem;
+  bool get isDeduction =>
+      this == PointAction.wishRedeem || this == PointAction.behaviorDeduction;
 }
 
 /// 家长端设置表里按顺序展示的可配置动作。
@@ -176,6 +192,78 @@ PointAction? pointActionFromCode(String code) {
 /// 展示用名称：认识的翻译，不认识的照原样显示。
 String pointActionLabel(String code) =>
     pointActionFromCode(code)?.label ?? code;
+
+/// 一条「行为扣分」的配置。
+///
+/// [points] **刻意存正数**：扣分的方向由账本里那笔负数流水表达。
+/// 两处各存一个符号，迟早会出现「配置 -2、流水 +2」的怪事。
+class PointBehavior {
+  const PointBehavior({
+    required this.studentId,
+    required this.id,
+    required this.name,
+    required this.points,
+    this.enabled = true,
+    this.builtin = false,
+    this.updatedAt,
+  });
+
+  final String studentId;
+
+  /// 稳定标识。内置行为用 `builtin_xxx`，自定义行为由客户端生成。
+  /// 账本的 refId 存的就是它 —— 所以**行为 id 不能跟着名字改**。
+  final String id;
+  final String name;
+  final int points;
+  final bool enabled;
+
+  /// 内置行为可以改分值、可以关掉，但不能删 —— 历史记录还要靠它显示名字。
+  final bool builtin;
+  final DateTime? updatedAt;
+
+  Map<String, dynamic> toMap() => {
+        'studentId': studentId,
+        'id': id,
+        'name': name,
+        'points': points,
+        // SQLite 只吃 0/1；服务端 toBool 也认 0/1，所以两边共用一份 toMap。
+        'enabled': enabled ? 1 : 0,
+        'builtin': builtin ? 1 : 0,
+        'updatedAt': updatedAt?.toIso8601String(),
+      };
+
+  factory PointBehavior.fromMap(Map<String, dynamic> map) {
+    return PointBehavior(
+      studentId: (map['studentId'] ?? '') as String,
+      id: (map['id'] ?? '') as String,
+      name: (map['name'] ?? '') as String,
+      points: (map['points'] as num?)?.toInt() ?? 0,
+      // SQLite 存 0/1，服务端 API 回 true/false，两边都要认。
+      enabled: (map['enabled'] is bool)
+          ? map['enabled'] as bool
+          : (map['enabled'] as num?)?.toInt() == 1 || map['enabled'] == null,
+      builtin: (map['builtin'] is bool)
+          ? map['builtin'] as bool
+          : (map['builtin'] as num?)?.toInt() == 1,
+      updatedAt: DateTime.tryParse((map['updatedAt'] ?? '') as String),
+    );
+  }
+}
+
+/// 预置行为。首次进入积分页时按稳定 id 落表，之后家长改的是表里那行。
+class PointBehaviorSeed {
+  const PointBehaviorSeed(this.id, this.name, this.points);
+
+  final String id;
+  final String name;
+  final int points;
+}
+
+const List<PointBehaviorSeed> kBuiltinPointBehaviors = [
+  PointBehaviorSeed('builtin_late', '迟到', 2),
+  PointBehaviorSeed('builtin_absent', '旷课', 5),
+  PointBehaviorSeed('builtin_discipline', '违纪', 3),
+];
 
 /// 一个动作在一个孩子名下的分值配置。
 class PointRule {

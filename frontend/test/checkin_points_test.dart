@@ -124,6 +124,17 @@ class _FakePointRepo implements PointRepository {
   @override
   Future<void> upsertPointRule(PointRule rule) async {}
 
+  // 本文件只测打卡发分，用不到行为配置；返回空表等价于「没配过行为」。
+  @override
+  Future<List<PointBehavior>> queryPointBehaviors(String studentId) async =>
+      const [];
+
+  @override
+  Future<void> upsertPointBehavior(PointBehavior behavior) async {}
+
+  @override
+  Future<void> deletePointBehavior(String studentId, String id) async {}
+
   @override
   Future<PointLedgerEntry?> findActivePointEntry({
     required String studentId,

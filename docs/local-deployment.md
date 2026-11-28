@@ -193,6 +193,7 @@ release 构建 248s → 包内 `lib/*/libapp.so` 三个 ABI 都含两个 FRP 地
 （`password` / `register`）。失败登录不写。
 
 - 迁移：`db/migrations/030_login_log.sql`（本机库已应用；表 32）。
+- 迁移：`db/migrations/031_point_behavior.sql`（行为扣分配置表；本机库已应用；表 33）。端点 `/data/points/behaviors`、`/data/points/behaviors/delete`；扣分仍走 `/data/points/earn`（负数流水）。客户端 DB v33。
 - 写入：`auth.login` / `auth.register` 在**发 token 的同一个事务**里写，
   不会出现「日志说登录成功、会话却没发出去」的幽灵记录。
 - IP：优先 `X-Forwarded-For` 第一段 → `X-Real-IP` → socket 地址（最多 64 字符）。

@@ -1,8 +1,8 @@
 # 数据库脚本
 
-## 当前真值：`migrations/001~029.sql`
+## 当前真值：`migrations/001~031.sql`
 
-29 个**增量迁移**，从原工程 `serverless/data-service/sql/` 原样迁入，文件名序号即执行顺序。
+31 个**增量迁移**：001~029 从原工程 `serverless/data-service/sql/` 原样迁入，030 登录留痕、031 行为扣分配置表为本仓新增。文件名序号即执行顺序。
 
 - 执行方式：`npm run db:migrate`（`backend/data-service/src/migrate.js` 在事务内按序执行），
   文件本身**不自带** `BEGIN/COMMIT`。

@@ -95,7 +95,7 @@ class LocalDatabaseService
 
     return openDatabase(
       path,
-      version: 32,
+      version: 33,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -507,6 +507,26 @@ class LocalDatabaseService
         createdBy TEXT NOT NULL DEFAULT '',
         reversedAt TEXT
       )
+    ''');
+
+    // 行为扣分的配置表（v33）。一个孩子一个行为一行，id 是稳定标识，
+    // 内置行为也落表 —— 家长可以改分值/关闭，但不能删，否则历史扣分
+    // 记录在账本里只剩一个看不懂的 refId。
+    await db.execute('''
+      CREATE TABLE point_behavior (
+        studentId TEXT NOT NULL,
+        id TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        points INTEGER NOT NULL DEFAULT 0,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        builtin INTEGER NOT NULL DEFAULT 0,
+        updatedAt TEXT,
+        PRIMARY KEY (studentId, id)
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX idx_point_behavior_student
+        ON point_behavior(studentId, enabled)
     ''');
 
     // 防重的最后一道闸。
@@ -1370,6 +1390,26 @@ class LocalDatabaseService
       // 英语单词打卡（v32）。`IF NOT EXISTS` 同上：openDatabase 里抛错
       // 会让整个库打不开，而不是「只少一个新功能」。
       await _createWordCheckinTables(db);
+    }
+    if (oldVersion < 33) {
+      // 行为扣分配置（v33）。纯新增，不回填历史流水 —— 老记录里的原因
+      // 已经写了行为名，不需要凭空造一批配置行。
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS point_behavior (
+          studentId TEXT NOT NULL,
+          id TEXT NOT NULL,
+          name TEXT NOT NULL DEFAULT '',
+          points INTEGER NOT NULL DEFAULT 0,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          builtin INTEGER NOT NULL DEFAULT 0,
+          updatedAt TEXT,
+          PRIMARY KEY (studentId, id)
+        )
+      ''');
+      await db.execute('''
+        CREATE INDEX IF NOT EXISTS idx_point_behavior_student
+          ON point_behavior(studentId, enabled)
+      ''');
     }
   }
 
@@ -5046,6 +5086,77 @@ class LocalDatabaseService
       {'reversedAt': value},
       where: 'id = ?',
       whereArgs: [id],
+    );
+  }
+
+  /// 某个孩子的行为配置。内置行为由 PointController 首次进入时按稳定 id 落表。
+  @override
+  Future<List<PointBehavior>> queryPointBehaviors(String studentId) async {
+    if (kIsWeb) {
+      await _ensureWebSeed();
+      final rows =
+          (_webStore['point_behavior'] ?? const <Map<String, dynamic>>[])
+              .where((row) => row['studentId'] == studentId)
+              .map(PointBehavior.fromMap)
+              .toList();
+      rows.sort((a, b) =>
+          a.builtin == b.builtin ? 0 : (a.builtin ? -1 : 1));
+      return rows;
+    }
+    final db = await database;
+    final rows = await db.query(
+      'point_behavior',
+      where: 'studentId = ?',
+      whereArgs: [studentId],
+      orderBy: 'builtin DESC, id ASC',
+    );
+    return rows.map(PointBehavior.fromMap).toList();
+  }
+
+  @override
+  Future<void> upsertPointBehavior(PointBehavior behavior) async {
+    final row = behavior.toMap();
+    if (kIsWeb) {
+      await _ensureWebSeed();
+      final rows = _webStore.putIfAbsent(
+        'point_behavior',
+        () => <Map<String, dynamic>>[],
+      );
+      final index = rows.indexWhere(
+        (r) => r['studentId'] == behavior.studentId && r['id'] == behavior.id,
+      );
+      if (index >= 0) {
+        rows[index] = row;
+      } else {
+        rows.add(row);
+      }
+      _saveWebStore();
+      return;
+    }
+    final db = await database;
+    await db.insert(
+      'point_behavior',
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  @override
+  Future<void> deletePointBehavior(String studentId, String id) async {
+    if (kIsWeb) {
+      await _ensureWebSeed();
+      final rows = _webStore['point_behavior'] ?? <Map<String, dynamic>>[];
+      rows.removeWhere(
+        (r) => r['studentId'] == studentId && r['id'] == id,
+      );
+      _saveWebStore();
+      return;
+    }
+    final db = await database;
+    await db.delete(
+      'point_behavior',
+      where: 'studentId = ? AND id = ?',
+      whereArgs: [studentId, id],
     );
   }
 

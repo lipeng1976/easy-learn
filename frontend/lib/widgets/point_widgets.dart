@@ -34,6 +34,8 @@ IconData pointActionIcon(String code) {
       return Icons.card_giftcard;
     case PointAction.wishRedeem:
       return Icons.redeem;
+    case PointAction.behaviorDeduction:
+      return Icons.report_problem_outlined;
     case null:
       return Icons.stars_outlined;
   }

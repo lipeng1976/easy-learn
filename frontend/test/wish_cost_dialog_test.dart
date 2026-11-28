@@ -274,6 +274,17 @@ class _StubPointRepo implements PointRepository {
   @override
   Future<List<PointRule>> queryPointRules(String studentId) async => [];
 
+  // 本文件只测心愿定价弹窗，用不到行为配置；返回空表等价于「没配过行为」。
+  @override
+  Future<List<PointBehavior>> queryPointBehaviors(String studentId) async =>
+      const [];
+
+  @override
+  Future<void> upsertPointBehavior(PointBehavior behavior) async {}
+
+  @override
+  Future<void> deletePointBehavior(String studentId, String id) async {}
+
   @override
   Future<PointLedgerEntry?> findActivePointEntry({
     required String studentId,
